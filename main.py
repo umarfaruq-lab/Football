@@ -1,6 +1,6 @@
 import os
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 import smtplib
 from email.mime.text import MIMEText
@@ -15,25 +15,34 @@ EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
 BASE_URL = "https://api.football-data.org/v4"
 HEADERS = {"X-Auth-Token": API_KEY} if API_KEY else {}
 
+# Expanded Leagues including UEFA Champions League
 LEAGUES = {
     "PL": "Premier League (England)",
     "PD": "La Liga (Spain)",
     "SA": "Serie A (Italy)",
     "BL1": "Bundesliga (Germany)",
-    "FL1": "Ligue 1 (France)"
+    "FL1": "Ligue 1 (France)",
+    "CL": "UEFA Champions League (Europe)"
 }
 
 TRACKER_FILE = "tracker.csv"
 
-def fetch_todays_matches():
+def fetch_upcoming_matches():
+    """Fetches matches from today up to the next 4 days to ensure games are always found."""
     today = datetime.now().strftime("%Y-%m-%d")
-    url = f"{BASE_URL}/matches?dateFrom={today}&dateTo={today}"
+    future_date = (datetime.now() + timedelta(days=4)).strftime("%Y-%m-%d")
+    
+    url = f"{BASE_URL}/matches?dateFrom={today}&dateTo={future_date}"
     response = requests.get(url, headers=HEADERS)
+    
     if response.status_code != 200:
-        print(f"Error fetching matches: {response.status_code}")
+        print(f"Error fetching matches: {response.status_code} - {response.text}")
         return []
+        
     matches = response.json().get("matches", [])
-    return [m for m in matches if m.get("competition", {}).get("code") in LEAGUES]
+    filtered_matches = [m for m in matches if m.get("competition", {}).get("code") in LEAGUES]
+    print(f"Found {len(filtered_matches)} upcoming matches across monitored leagues.")
+    return filtered_matches
 
 def fetch_league_standings(competition_code):
     url = f"{BASE_URL}/competitions/{competition_code}/standings"
@@ -75,6 +84,16 @@ def analyze_and_predict(matches):
         home_id = match["homeTeam"]["id"]
         away_id = match["awayTeam"]["id"]
         
+        # Parse Kickoff Time
+        utc_date_str = match.get("utcDate", "")
+        try:
+            dt_obj = datetime.strptime(utc_date_str, "%Y-%m-%dT%H:%M:%SZ")
+            kickoff_display = dt_obj.strftime("%b %d, %H:%M UTC")
+            match_date_only = dt_obj.strftime("%Y-%m-%d")
+        except:
+            kickoff_display = "TBD"
+            match_date_only = datetime.now().strftime("%Y-%m-%d")
+
         standings = fetch_league_standings(comp_code)
         home_stats = standings.get(home_id, {})
         away_stats = standings.get(away_id, {})
@@ -136,7 +155,8 @@ def analyze_and_predict(matches):
         over_1_5 = "Yes" if total_exp_goals >= 1.6 else "Risky / Under"
             
         predictions.append({
-            "date": datetime.now().strftime("%Y-%m-%d"),
+            "date": match_date_only,
+            "kickoff": kickoff_display,
             "league": LEAGUES.get(comp_code, comp_code),
             "match": f"{home_team} vs {away_team}",
             "prediction": predicted_winner,
@@ -215,52 +235,55 @@ def send_email(predictions, tracker_df):
     total_won = len(completed[completed["Status"] == "WON"])
     accuracy_pct = (total_won / total_completed * 100) if total_completed > 0 else 0.0
 
-    html_content = "<h2>⚽ Daily Football Predictions & Categorized Shortlists</h2>"
-    html_content += f"<p>Generated on <b>{datetime.now().strftime('%Y-%m-%d')}</b> with strict categorization across High, Medium, and Low probability tiers.</p>"
+    html_content = "<h2>⚽ Upcoming Football Predictions & Market Shortlists</h2>"
+    html_content += f"<p>Report generated on <b>{datetime.now().strftime('%Y-%m-%d')}</b> covering fixtures for the next 4 days.</p>"
     
     html_content += f"<div style='background: #e9ecef; padding: 10px; border-radius: 5px; margin-bottom: 15px;'>"
     html_content += f"<b>Model Track Record:</b> {total_won} Won / {total_completed} Completed ({accuracy_pct:.1f}% Success Rate)"
     html_content += "</div>"
 
-    # Master Table
-    html_content += "<h3>📅 Full Fixture Analysis Table</h3>"
-    html_content += "<table border='1' cellspacing='0' cellpadding='6' style='border-collapse: collapse; width: 100%; font-family: sans-serif; font-size: 12px;'>"
-    html_content += "<tr style='background-color: #f8f9fa;'><th>League</th><th>Matchup</th><th>Prediction</th><th>Confidence</th><th>Double Chance</th><th>Over 1.5</th></tr>"
-    
-    high_list, med_list, low_list, over_15_list, dc_list = [], [], [], [], []
-
-    for p in predictions:
-        html_content += f"<tr><td>{p['league']}</td><td>{p['match']}</td><td><b>{p['prediction']}</b></td><td>{p['confidence']}</td><td>{p['double_chance']}</td><td>{p['over_1_5']}</td></tr>"
+    if not predictions:
+        html_content += "<p><b>No upcoming matches found in the next 4 days across monitored leagues (likely an international break window).</b></p>"
+    else:
+        # Master Table
+        html_content += "<h3>📅 Full Upcoming Fixtures Table</h3>"
+        html_content += "<table border='1' cellspacing='0' cellpadding='6' style='border-collapse: collapse; width: 100%; font-family: sans-serif; font-size: 12px;'>"
+        html_content += "<tr style='background-color: #f8f9fa;'><th>Kickoff</th><th>League</th><th>Matchup</th><th>Prediction</th><th>Confidence</th><th>Double Chance</th><th>Over 1.5</th></tr>"
         
-        item_desc = f"<b>{p['match']}</b> ({p['league']}) ➔ <b>Pick: {p['prediction']}</b> | Expected Goals: {p['exp_goals']}"
+        high_list, med_list, low_list, over_15_list, dc_list = [], [], [], [], []
+
+        for p in predictions:
+            html_content += f"<tr><td>{p['kickoff']}</td><td>{p['league']}</td><td>{p['match']}</td><td><b>{p['prediction']}</b></td><td>{p['confidence']}</td><td>{p['double_chance']}</td><td>{p['over_1_5']}</td></tr>"
+            
+            item_desc = f"<b>{p['match']}</b> ({p['league']}) ➔ <b>Kickoff: {p['kickoff']}</b> | Pick: <b>{p['prediction']}</b> | xG: {p['exp_goals']}"
+            
+            if p['confidence'] == 'High':
+                high_list.append(item_desc)
+            elif p['confidence'] == 'Medium':
+                med_list.append(item_desc)
+            else:
+                low_list.append(item_desc)
+                
+            if p['over_1_5'] == 'Yes':
+                over_15_list.append(f"<b>{p['match']}</b> ({p['kickoff']}) ➔ xG: {p['exp_goals']}")
+                
+            dc_list.append(f"<b>{p['match']}</b> ({p['kickoff']}) ➔ {p['double_chance']}")
+
+        html_content += "</table>"
+
+        # Categorized Sections
+        html_content += "<h3 style='color: #2b8a3e;'>🔥 High Probability Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in high_list]) if high_list else "<li>No high probability matches in this window.</li>") + "</ul>"
         
-        if p['confidence'] == 'High':
-            high_list.append(item_desc)
-        elif p['confidence'] == 'Medium':
-            med_list.append(item_desc)
-        else:
-            low_list.append(item_desc)
-            
-        if p['over_1_5'] == 'Yes':
-            over_15_list.append(f"<b>{p['match']}</b> ({p['league']}) ➔ xG: {p['exp_goals']}")
-            
-        dc_list.append(f"<b>{p['match']}</b> ({p['league']}) ➔ {p['double_chance']}")
-
-    html_content += "</table>"
-
-    # Separate Categorized Sections
-    html_content += "<h3 style='color: #2b8a3e;'>🔥 High Probability Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in high_list]) if high_list else "<li>No high probability mismatches today.</li>") + "</ul>"
-    
-    html_content += "<h3 style='color: #1971c2;'>⚡ Medium Probability Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in med_list]) if med_list else "<li>No medium probability matches today.</li>") + "</ul>"
-    
-    html_content += "<h3 style='color: #e67700;'>⚠️ Low Probability / Tight Matches Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in low_list]) if low_list else "<li>No low probability/tight matches today.</li>") + "</ul>"
-    
-    html_content += "<h3>🛡️ Double Chance Recommendations</h3><ul>" + ("".join([f"<li>{x}</li>" for x in dc_list]) if dc_list else "<li>None available today.</li>") + "</ul>"
-    
-    html_content += "<h3>⚽ Matches Expected Over 1.5 Goals</h3><ul>" + ("".join([f"<li>{x}</li>" for x in over_15_list]) if over_15_list else "<li>None expected over 1.5 goals today.</li>") + "</ul>"
+        html_content += "<h3 style='color: #1971c2;'>⚡ Medium Probability Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in med_list]) if med_list else "<li>No medium probability matches in this window.</li>") + "</ul>"
+        
+        html_content += "<h3 style='color: #e67700;'>⚠️ Low Probability / Tight Matches Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in low_list]) if low_list else "<li>No low probability/tight matches in this window.</li>") + "</ul>"
+        
+        html_content += "<h3>🛡️ Double Chance Recommendations</h3><ul>" + ("".join([f"<li>{x}</li>" for x in dc_list]) if dc_list else "<li>None available.</li>") + "</ul>"
+        
+        html_content += "<h3>⚽ Matches Expected Over 1.5 Goals</h3><ul>" + ("".join([f"<li>{x}</li>" for x in over_15_list]) if over_15_list else "<li>None expected over 1.5 goals in this window.</li>") + "</ul>"
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Categorized Football Shortlists & Predictions - {datetime.now().strftime('%Y-%m-%d')}"
+    msg["Subject"] = f"Football Predictions & Shortlists - {datetime.now().strftime('%Y-%m-%d')}"
     msg["From"] = EMAIL_SENDER
     msg["To"] = EMAIL_RECEIVER
     msg.attach(MIMEText(html_content, "html"))
@@ -269,13 +292,13 @@ def send_email(predictions, tracker_df):
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
             server.sendmail(EMAIL_SENDER, EMAIL_RECEIVER, msg.as_string())
-        print("Categorized shortlists email sent successfully!")
+        print("Predictions email sent successfully!")
     except Exception as e:
         print(f"Failed to send email: {e}")
 
 if __name__ == "__main__":
-    print("Running accurate categorization script...")
-    matches = fetch_todays_matches()
+    print("Running look-ahead fixture and prediction engine...")
+    matches = fetch_upcoming_matches()
     predictions = analyze_and_predict(matches)
     tracker_df = update_tracker_and_evaluate(predictions)
     send_email(predictions, tracker_df)
