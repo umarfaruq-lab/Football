@@ -1,6 +1,6 @@
 import os
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 import pandas as pd
 import smtplib
 from email.mime.text import MIMEText
@@ -54,7 +54,6 @@ def fetch_h2h_data(match_id):
     return response.json().get("aggregates", {})
 
 def parse_form_score(form_str):
-    """Calculates momentum points from recent form string (e.g. 'W,W,D,L,W')"""
     if not form_str:
         return 0
     score = 0
@@ -76,7 +75,6 @@ def analyze_and_predict(matches):
         home_id = match["homeTeam"]["id"]
         away_id = match["awayTeam"]["id"]
         
-        # 1. Fetch Standings & Form Data
         standings = fetch_league_standings(comp_code)
         home_stats = standings.get(home_id, {})
         away_stats = standings.get(away_id, {})
@@ -91,7 +89,21 @@ def analyze_and_predict(matches):
         home_form_pts = parse_form_score(home_form_str)
         away_form_pts = parse_form_score(away_form_str)
         
-        # 2. Fetch Head-to-Head (H2H) Data
+        # Goal statistics for Expected Goals (xG) calculation
+        home_played = max(home_stats.get("playedGames", 1), 1)
+        away_played = max(away_stats.get("playedGames", 1), 1)
+        
+        home_gf_per_game = home_stats.get("goalsFor", 0) / home_played
+        home_ga_per_game = home_stats.get("goalsAgainst", 0) / home_played
+        away_gf_per_game = away_stats.get("goalsFor", 0) / away_played
+        away_ga_per_game = away_stats.get("goalsAgainst", 0) / away_played
+        
+        # Expected goals estimation: Attack vs Defense blending
+        exp_home_goals = round((home_gf_per_game + away_ga_per_game) / 2, 2)
+        exp_away_goals = round((away_gf_per_game + home_ga_per_game) / 2, 2)
+        total_exp_goals = round(exp_home_goals + exp_away_goals, 2)
+        
+        # Head-to-Head Data
         h2h = fetch_h2h_data(match_id)
         home_h2h_wins = 0
         away_h2h_wins = 0
@@ -99,7 +111,7 @@ def analyze_and_predict(matches):
             home_h2h_wins = h2h.get("homeTeam", {}).get("wins", 0)
             away_h2h_wins = h2h.get("awayTeam", {}).get("wins", 0)
             
-        # 3. Weighted Scoring Algorithm (Standings + Form + H2H + Home Advantage)
+        # Weighted Scoring Algorithm
         home_score = (20 - home_position) * 1.2 + (home_points * 0.3) + (home_form_pts * 0.8) + (home_h2h_wins * 0.5) + 3.0
         away_score = (20 - away_position) * 1.2 + (away_points * 0.3) + (away_form_pts * 0.8) + (away_h2h_wins * 0.5)
         
@@ -119,20 +131,17 @@ def analyze_and_predict(matches):
             "match": f"{home_team} vs {away_team}",
             "prediction": predicted_winner,
             "confidence": confidence,
-            "home_team": home_team,
-            "away_team": away_team
+            "exp_goals": f"{exp_home_goals} - {exp_away_goals} (Total: {total_exp_goals})"
         })
         
     return predictions
 
 def update_tracker_and_evaluate(new_predictions):
-    """Grades past pending predictions and appends new ones to tracker.csv"""
     if os.path.exists(TRACKER_FILE):
         df = pd.read_csv(TRACKER_FILE)
     else:
-        df = pd.DataFrame(columns=["Date", "League", "Match", "Prediction", "Actual", "Status"])
+        df = pd.DataFrame(columns=["Date", "League", "Match", "Prediction", "Expected Goals", "Actual", "Status"])
     
-    # Grade past PENDING predictions by checking match results from recent days
     pending_rows = df[df["Status"] == "PENDING"]
     if not pending_rows.empty:
         oldest_date = pending_rows["Date"].min()
@@ -144,7 +153,6 @@ def update_tracker_and_evaluate(new_predictions):
             finished_matches = response.json().get("matches", [])
             for idx, row in pending_rows.iterrows():
                 match_desc = row["Match"]
-                # Find matching finished game
                 for m in finished_matches:
                     if m.get("status") == "FINISHED":
                         h_name = m["homeTeam"]["name"]
@@ -156,25 +164,17 @@ def update_tracker_and_evaluate(new_predictions):
                             
                             if h_goals > a_goals:
                                 actual_winner = h_name
-                            elif a_goals > h_name: # typo safe check
+                            elif a_goals > h_goals:
                                 actual_winner = a_name
                             else:
                                 actual_winner = "Draw / Closely Contested"
-                            if h_goals == a_goals:
-                                actual_winner = "Draw / Closely Contested"
                                 
                             df.loc[idx, "Actual"] = f"{h_name} {h_goals}-{a_goals} {a_name}"
-                            
-                            if row["Prediction"] == actual_winner:
-                                df.loc[idx, "Status"] = "WON"
-                            else:
-                                df.loc[idx, "Status"] = "LOST"
+                            df.loc[idx, "Status"] = "WON" if row["Prediction"] == actual_winner else "LOST"
                             break
 
-    # Append new predictions
     new_rows = []
     for p in new_predictions:
-        # Check if match already exists in tracker for today
         existing = df[(df["Date"] == p["date"]) & (df["Match"] == p["match"])]
         if existing.empty:
             new_rows.append({
@@ -182,6 +182,7 @@ def update_tracker_and_evaluate(new_predictions):
                 "League": p["league"],
                 "Match": p["match"],
                 "Prediction": p["prediction"],
+                "Expected Goals": p["exp_goals"],
                 "Actual": "Pending",
                 "Status": "PENDING"
             })
@@ -200,30 +201,28 @@ def send_email(predictions, tracker_df):
             print(p)
         return
 
-    # Calculate historical accuracy stats
     completed = tracker_df[tracker_df["Status"].isin(["WON", "LOST"])]
     total_completed = len(completed)
     total_won = len(completed[completed["Status"] == "WON"])
     accuracy_pct = (total_won / total_completed * 100) if total_completed > 0 else 0.0
 
-    html_content = "<h2>⚽ Advanced Football Predictions & Accuracy Tracker</h2>"
-    html_content += f"<p>Analysis generated on <b>{datetime.now().strftime('%Y-%m-%d')}</b> utilizing Standings, Recent Form, and H2H History.</p>"
+    html_content = "<h2>⚽ Football Predictions & Expected Goals (xG) Report</h2>"
+    html_content += f"<p>Analysis generated on <b>{datetime.now().strftime('%Y-%m-%d')}</b> based on standings, form, H2H, and scoring averages.</p>"
     
-    # Accuracy Banner
     html_content += f"<div style='background: #e9ecef; padding: 10px; border-radius: 5px; margin-bottom: 15px;'>"
     html_content += f"<b>Model Track Record:</b> {total_won} Won / {total_completed} Completed ({accuracy_pct:.1f}% Success Rate)"
     html_content += "</div>"
 
     high_prob_teams = []
 
-    html_content += "<h3>📅 Today's Fixtures & Predictions</h3>"
+    html_content += "<h3>📅 Today's Fixtures, Predictions & Expected Goals</h3>"
     html_content += "<table border='1' cellspacing='0' cellpadding='8' style='border-collapse: collapse; width: 100%; font-family: sans-serif; font-size: 13px;'>"
-    html_content += "<tr style='background-color: #f8f9fa;'><th>League</th><th>Matchup</th><th>Predicted Winner</th><th>Confidence</th></tr>"
+    html_content += "<tr style='background-color: #f8f9fa;'><th>League</th><th>Matchup</th><th>Predicted Winner</th><th>Expected Goals (xG)</th><th>Confidence</th></tr>"
     
     for p in predictions:
-        html_content += f"<tr><td>{p['league']}</td><td>{p['match']}</td><td><b>{p['prediction']}</b></td><td>{p['confidence']}</td></tr>"
+        html_content += f"<tr><td>{p['league']}</td><td>{p['match']}</td><td><b>{p['prediction']}</b></td><td>{p['exp_goals']}</td><td>{p['confidence']}</td></tr>"
         if p['confidence'] == 'High':
-            high_prob_teams.append(f"<b>{p['prediction']}</b> ({p['match']})")
+            high_prob_teams.append(f"<b>{p['prediction']}</b> ({p['match']} - xG: {p['exp_goals']})")
             
     html_content += "</table>"
     
@@ -232,11 +231,11 @@ def send_email(predictions, tracker_df):
         for team in high_prob_teams:
             html_content += f"<li>{team}</li>"
     else:
-        html_content += "<li>No high-confidence mismatches today; expect balanced games.</li>"
+        html_content += "<li>No high-confidence mismatches today; expect closely fought matches.</li>"
     html_content += "</ul>"
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Advanced Football Predictions & Tracker - {datetime.now().strftime('%Y-%m-%d')}"
+    msg["Subject"] = f"Football Predictions & xG Report - {datetime.now().strftime('%Y-%m-%d')}"
     msg["From"] = EMAIL_SENDER
     msg["To"] = EMAIL_RECEIVER
     msg.attach(MIMEText(html_content, "html"))
@@ -245,16 +244,16 @@ def send_email(predictions, tracker_df):
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
             server.sendmail(EMAIL_SENDER, EMAIL_RECEIVER, msg.as_string())
-        print("Advanced prediction email sent successfully!")
+        print("Predictions & xG email sent successfully!")
     except Exception as e:
         print(f"Failed to send email: {e}")
 
 if __name__ == "__main__":
-    print("Fetching matches and analyzing Form & H2H...")
+    print("Fetching matches and calculating Expected Goals (xG)...")
     matches = fetch_todays_matches()
     print(f"Found {len(matches)} matches scheduled for today.")
     
     predictions = analyze_and_predict(matches)
     tracker_df = update_tracker_and_evaluate(predictions)
     send_email(predictions, tracker_df)
-    print("Pipeline run and tracker update finished.")
+    print("Pipeline run with xG analysis finished.")
