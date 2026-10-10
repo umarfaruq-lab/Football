@@ -87,7 +87,7 @@ def analyze_and_predict(matches):
         home_form_pts = parse_form_score(home_stats.get("form", ""))
         away_form_pts = parse_form_score(away_stats.get("form", ""))
         
-        # Expected Goals (xG) calculation
+        # Expected Goals (xG) Calculation
         home_played = max(home_stats.get("playedGames", 1), 1)
         away_played = max(away_stats.get("playedGames", 1), 1)
         
@@ -100,38 +100,38 @@ def analyze_and_predict(matches):
         exp_away_goals = round((away_gf + home_ga) / 2, 2)
         total_exp_goals = round(exp_home_goals + exp_away_goals, 2)
         
-        # Head-to-Head
+        # Head-to-Head Data
         h2h = fetch_h2h_data(match_id)
         home_h2h_wins = h2h.get("homeTeam", {}).get("wins", 0) if h2h else 0
         away_h2h_wins = h2h.get("awayTeam", {}).get("wins", 0) if h2h else 0
         
-        # Weighted Scoring
+        # Weighted Scoring Model
         home_score = (20 - home_position) * 1.2 + (home_points * 0.3) + (home_form_pts * 0.8) + (home_h2h_wins * 0.5) + 3.0
         away_score = (20 - away_position) * 1.2 + (away_points * 0.3) + (away_form_pts * 0.8) + (away_h2h_wins * 0.5)
         
         score_diff = home_score - away_score
         
-        # Probability Tiers & Outcomes
-        if score_diff > 5.0:
+        # Precise Categorization
+        if score_diff > 4.5:
             predicted_winner = home_team
             confidence = "High"
             double_chance = f"{home_team} or Draw (1X)"
-        elif score_diff < -5.0:
+        elif score_diff < -4.5:
             predicted_winner = away_team
             confidence = "High"
             double_chance = f"{away_team} or Draw (X2)"
-        elif 2.0 <= score_diff <= 5.0:
+        elif 2.0 <= score_diff <= 4.5:
             predicted_winner = home_team
             confidence = "Medium"
             double_chance = f"{home_team} or Draw (1X)"
-        elif -5.0 <= score_diff <= -2.0:
+        elif -4.5 <= score_diff <= -2.0:
             predicted_winner = away_team
             confidence = "Medium"
             double_chance = f"{away_team} or Draw (X2)"
         else:
             predicted_winner = "Draw / Closely Contested"
             confidence = "Low"
-            double_chance = f"Draw or Tight Match (12 / X)"
+            double_chance = "Tight Match / Draw (12 or X)"
             
         over_1_5 = "Yes" if total_exp_goals >= 1.6 else "Risky / Under"
             
@@ -215,15 +215,15 @@ def send_email(predictions, tracker_df):
     total_won = len(completed[completed["Status"] == "WON"])
     accuracy_pct = (total_won / total_completed * 100) if total_completed > 0 else 0.0
 
-    html_content = "<h2>⚽ Categorized Football Predictions & Market Report</h2>"
-    html_content += f"<p>Generated on <b>{datetime.now().strftime('%Y-%m-%d')}</b> with complete High, Medium, and Low probability shortlists.</p>"
+    html_content = "<h2>⚽ Daily Football Predictions & Categorized Shortlists</h2>"
+    html_content += f"<p>Generated on <b>{datetime.now().strftime('%Y-%m-%d')}</b> with strict categorization across High, Medium, and Low probability tiers.</p>"
     
     html_content += f"<div style='background: #e9ecef; padding: 10px; border-radius: 5px; margin-bottom: 15px;'>"
     html_content += f"<b>Model Track Record:</b> {total_won} Won / {total_completed} Completed ({accuracy_pct:.1f}% Success Rate)"
     html_content += "</div>"
 
     # Master Table
-    html_content += "<h3>📅 Full Fixture Analysis</h3>"
+    html_content += "<h3>📅 Full Fixture Analysis Table</h3>"
     html_content += "<table border='1' cellspacing='0' cellpadding='6' style='border-collapse: collapse; width: 100%; font-family: sans-serif; font-size: 12px;'>"
     html_content += "<tr style='background-color: #f8f9fa;'><th>League</th><th>Matchup</th><th>Prediction</th><th>Confidence</th><th>Double Chance</th><th>Over 1.5</th></tr>"
     
@@ -232,29 +232,35 @@ def send_email(predictions, tracker_df):
     for p in predictions:
         html_content += f"<tr><td>{p['league']}</td><td>{p['match']}</td><td><b>{p['prediction']}</b></td><td>{p['confidence']}</td><td>{p['double_chance']}</td><td>{p['over_1_5']}</td></tr>"
         
-        item_desc = f"<b>{p['match']}</b> (Pick: {p['prediction']} | xG: {p['exp_goals']})"
-        if p['confidence'] == 'High': high_list.append(item_desc)
-        elif p['confidence'] == 'Medium': med_list.append(item_desc)
-        else: low_list.append(item_desc)
+        item_desc = f"<b>{p['match']}</b> ({p['league']}) ➔ <b>Pick: {p['prediction']}</b> | Expected Goals: {p['exp_goals']}"
         
-        if p['over_1_5'] == 'Yes':
-            over_15_list.append(f"<b>{p['match']}</b> (Expected Goals: {p['exp_goals']})")
+        if p['confidence'] == 'High':
+            high_list.append(item_desc)
+        elif p['confidence'] == 'Medium':
+            med_list.append(item_desc)
+        else:
+            low_list.append(item_desc)
             
-        dc_list.append(f"<b>{p['match']}</b> ➔ {p['double_chance']}")
+        if p['over_1_5'] == 'Yes':
+            over_15_list.append(f"<b>{p['match']}</b> ({p['league']}) ➔ xG: {p['exp_goals']}")
+            
+        dc_list.append(f"<b>{p['match']}</b> ({p['league']}) ➔ {p['double_chance']}")
 
     html_content += "</table>"
 
-    # Dedicated Shortlists for High, Medium, and Low Probabilities
-    html_content += "<h3>🔥 High Probability Selections</h3><ul>" + ("".join([f"<li>{x}</li>" for x in high_list]) if high_list else "<li>None today.</li>") + "</ul>"
-    html_content += "<h3>⚡ Medium Probability Selections</h3><ul>" + ("".join([f"<li>{x}</li>" for x in med_list]) if med_list else "<li>None today.</li>") + "</ul>"
-    html_content += "<h3>⚠️ Low Probability / Tight Matches Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in low_list]) if low_list else "<li>None today.</li>") + "</ul>"
+    # Separate Categorized Sections
+    html_content += "<h3 style='color: #2b8a3e;'>🔥 High Probability Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in high_list]) if high_list else "<li>No high probability mismatches today.</li>") + "</ul>"
     
-    # Additional Market Recommendations
-    html_content += "<h3>🛡️ Double Chance Recommendations</h3><ul>" + ("".join([f"<li>{x}</li>" for x in dc_list]) if dc_list else "<li>None today.</li>") + "</ul>"
-    html_content += "<h3>⚽ Matches Expected Over 1.5 Goals</h3><ul>" + ("".join([f"<li>{x}</li>" for x in over_15_list]) if over_15_list else "<li>None today.</li>") + "</ul>"
+    html_content += "<h3 style='color: #1971c2;'>⚡ Medium Probability Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in med_list]) if med_list else "<li>No medium probability matches today.</li>") + "</ul>"
+    
+    html_content += "<h3 style='color: #e67700;'>⚠️ Low Probability / Tight Matches Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in low_list]) if low_list else "<li>No low probability/tight matches today.</li>") + "</ul>"
+    
+    html_content += "<h3>🛡️ Double Chance Recommendations</h3><ul>" + ("".join([f"<li>{x}</li>" for x in dc_list]) if dc_list else "<li>None available today.</li>") + "</ul>"
+    
+    html_content += "<h3>⚽ Matches Expected Over 1.5 Goals</h3><ul>" + ("".join([f"<li>{x}</li>" for x in over_15_list]) if over_15_list else "<li>None expected over 1.5 goals today.</li>") + "</ul>"
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Categorized Football Predictions & Shortlists - {datetime.now().strftime('%Y-%m-%d')}"
+    msg["Subject"] = f"Categorized Football Shortlists & Predictions - {datetime.now().strftime('%Y-%m-%d')}"
     msg["From"] = EMAIL_SENDER
     msg["To"] = EMAIL_RECEIVER
     msg.attach(MIMEText(html_content, "html"))
@@ -263,12 +269,12 @@ def send_email(predictions, tracker_df):
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
             server.sendmail(EMAIL_SENDER, EMAIL_RECEIVER, msg.as_string())
-        print("Categorized prediction report with all shortlists sent successfully!")
+        print("Categorized shortlists email sent successfully!")
     except Exception as e:
         print(f"Failed to send email: {e}")
 
 if __name__ == "__main__":
-    print("Running advanced categorization and shortlists generation...")
+    print("Running accurate categorization script...")
     matches = fetch_todays_matches()
     predictions = analyze_and_predict(matches)
     tracker_df = update_tracker_and_evaluate(predictions)
