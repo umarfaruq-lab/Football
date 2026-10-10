@@ -5,16 +5,16 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-# Environment Variables
+# Environment Variables injected securely from GitHub Secrets
 API_KEY = os.getenv("FOOTBALL_API_KEY")
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
 
 BASE_URL = "https://api.football-data.org/v4"
-HEADERS = {"X-Auth-Token": API_KEY}
+HEADERS = {"X-Auth-Token": API_KEY} if API_KEY else {}
 
-# Top 5 European League Codes supported by Football-Data.org free tier
+# Top 5 European Leagues supported by Football-Data.org
 LEAGUES = {
     "PL": "Premier League (England)",
     "PD": "La Liga (Spain)",
@@ -33,8 +33,8 @@ def fetch_todays_matches():
         return []
         
     matches = response.json().get("matches", [])
-    # Filter exclusively for top 5 leagues
-    filtered_matches = [m for m in matches if m["competition"]["code"] in LEAGUES]
+    # Filter strictly for top 5 leagues
+    filtered_matches = [m for m in matches if m.get("competition", {}).get("code") in LEAGUES]
     return filtered_matches
 
 def fetch_league_standings(competition_code):
@@ -68,7 +68,7 @@ def analyze_and_predict(matches):
         home_position = home_stats.get("position", 10)
         away_position = away_stats.get("position", 10)
         
-        # Algorithmic weighting based on league position difference & points + home advantage
+        # Algorithmic weighting: league position, accumulated points, and home advantage factor (+3.0)
         home_score = (20 - home_position) * 1.5 + (home_points * 0.4) + 3.0
         away_score = (20 - away_position) * 1.5 + (away_points * 0.4)
         
@@ -93,16 +93,17 @@ def analyze_and_predict(matches):
 
 def send_email(predictions):
     if not EMAIL_SENDER or not EMAIL_PASSWORD or not EMAIL_RECEIVER:
-        print("Email configuration missing. Printing text summary to console:")
-        print(predictions)
+        print("Email credentials missing. Printing output summary to console instead:")
+        for p in predictions:
+            print(p)
         return
 
     html_content = "<h2>⚽ Daily European Football Predictions</h2>"
-    html_content += f"<p>Automated match analysis for <b>{datetime.now().strftime('%Y-%m-%d')}</b> across Europe's top leagues.</p>"
+    html_content += f"<p>Automated match analysis generated on <b>{datetime.now().strftime('%Y-%m-%d')}</b> across Europe's top leagues.</p>"
     
     high_prob_teams = []
 
-    html_content += "<table border='1' cellspacing='0' cellpadding='6' style='border-collapse: collapse; width: 100%; font-family: sans-serif;'>"
+    html_content += "<table border='1' cellspacing='0' cellpadding='8' style='border-collapse: collapse; width: 100%; font-family: sans-serif; font-size: 14px;'>"
     html_content += "<tr style='background-color: #f8f9fa;'><th>League</th><th>Matchup</th><th>Predicted Outcome</th><th>Confidence</th></tr>"
     
     for p in predictions:
@@ -117,7 +118,7 @@ def send_email(predictions):
         for team in high_prob_teams:
             html_content += f"<li>{team}</li>"
     else:
-        html_content += "<li>No high-confidence mismatches found today; expect tight games.</li>"
+        html_content += "<li>No high-confidence mismatches found for today's fixtures; expect tight matches.</li>"
     html_content += "</ul>"
 
     msg = MIMEMultipart("alternative")
