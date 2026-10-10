@@ -133,7 +133,6 @@ def analyze_and_predict(matches):
             confidence = "Low"
             double_chance = f"Draw or Tight Match (12 / X)"
             
-        # Over 1.5 Goals Filter
         over_1_5 = "Yes" if total_exp_goals >= 1.6 else "Risky / Under"
             
         predictions.append({
@@ -216,8 +215,8 @@ def send_email(predictions, tracker_df):
     total_won = len(completed[completed["Status"] == "WON"])
     accuracy_pct = (total_won / total_completed * 100) if total_completed > 0 else 0.0
 
-    html_content = "<h2>⚽ Categorized Football Predictions & Betting Markets</h2>"
-    html_content += f"<p>Generated on <b>{datetime.now().strftime('%Y-%m-%d')}</b> with Confidence Tiers, Double Chance, and Over 1.5 Goals Analysis.</p>"
+    html_content = "<h2>⚽ Categorized Football Predictions & Market Report</h2>"
+    html_content += f"<p>Generated on <b>{datetime.now().strftime('%Y-%m-%d')}</b> with complete High, Medium, and Low probability shortlists.</p>"
     
     html_content += f"<div style='background: #e9ecef; padding: 10px; border-radius: 5px; margin-bottom: 15px;'>"
     html_content += f"<b>Model Track Record:</b> {total_won} Won / {total_completed} Completed ({accuracy_pct:.1f}% Success Rate)"
@@ -233,7 +232,6 @@ def send_email(predictions, tracker_df):
     for p in predictions:
         html_content += f"<tr><td>{p['league']}</td><td>{p['match']}</td><td><b>{p['prediction']}</b></td><td>{p['confidence']}</td><td>{p['double_chance']}</td><td>{p['over_1_5']}</td></tr>"
         
-        # Categorize lists
         item_desc = f"<b>{p['match']}</b> (Pick: {p['prediction']} | xG: {p['exp_goals']})"
         if p['confidence'] == 'High': high_list.append(item_desc)
         elif p['confidence'] == 'Medium': med_list.append(item_desc)
@@ -246,14 +244,17 @@ def send_email(predictions, tracker_df):
 
     html_content += "</table>"
 
-    # Shortlists Sections
-    html_content += "<h3>🔥 High Probability Selections</h3><ul>" + "".join([f"<li>{x}</li>" for x in high_list]) + "</ul>" if high_list else "<h3>🔥 High Probability Selections</h3><p>None today.</p>"
-    html_content += "<h3>⚡ Medium Probability Selections</h3><ul>" + "".join([f"<li>{x}</li>" for x in med_list]) + "</ul>" if med_list else ""
-    html_content += "<h3>🛡️ Double Chance Recommendations</h3><ul>" + "".join([f"<li>{x}</li>" for x in dc_list]) + "</ul>"
-    html_content += "<h3>⚽ Matches Expected Over 1.5 Goals</h3><ul>" + "".join([f"<li>{x}</li>" for x in over_15_list]) + "</ul>"
+    # Dedicated Shortlists for High, Medium, and Low Probabilities
+    html_content += "<h3>🔥 High Probability Selections</h3><ul>" + ("".join([f"<li>{x}</li>" for x in high_list]) if high_list else "<li>None today.</li>") + "</ul>"
+    html_content += "<h3>⚡ Medium Probability Selections</h3><ul>" + ("".join([f"<li>{x}</li>" for x in med_list]) if med_list else "<li>None today.</li>") + "</ul>"
+    html_content += "<h3>⚠️ Low Probability / Tight Matches Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in low_list]) if low_list else "<li>None today.</li>") + "</ul>"
+    
+    # Additional Market Recommendations
+    html_content += "<h3>🛡️ Double Chance Recommendations</h3><ul>" + ("".join([f"<li>{x}</li>" for x in dc_list]) if dc_list else "<li>None today.</li>") + "</ul>"
+    html_content += "<h3>⚽ Matches Expected Over 1.5 Goals</h3><ul>" + ("".join([f"<li>{x}</li>" for x in over_15_list]) if over_15_list else "<li>None today.</li>") + "</ul>"
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Categorized Football Predictions & Betting Markets - {datetime.now().strftime('%Y-%m-%d')}"
+    msg["Subject"] = f"Categorized Football Predictions & Shortlists - {datetime.now().strftime('%Y-%m-%d')}"
     msg["From"] = EMAIL_SENDER
     msg["To"] = EMAIL_RECEIVER
     msg.attach(MIMEText(html_content, "html"))
@@ -262,12 +263,12 @@ def send_email(predictions, tracker_df):
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
             server.sendmail(EMAIL_SENDER, EMAIL_RECEIVER, msg.as_string())
-        print("Categorized prediction report sent successfully!")
+        print("Categorized prediction report with all shortlists sent successfully!")
     except Exception as e:
         print(f"Failed to send email: {e}")
 
 if __name__ == "__main__":
-    print("Running advanced categorization and market analysis...")
+    print("Running advanced categorization and shortlists generation...")
     matches = fetch_todays_matches()
     predictions = analyze_and_predict(matches)
     tracker_df = update_tracker_and_evaluate(predictions)
