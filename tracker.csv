@@ -1,1 +1,55 @@
-Date,League,Match,Prediction,Actual,Status
+Date,League,Match,Prediction,Actual,Status,Confidence
+2026-10-10,Premier League (England),Arsenal FC vs Leeds United FC,Arsenal FC,Pending,PENDING,High
+2026-10-10,La Liga (Spain),Rayo Vallecano de Madrid vs Athletic Club,Draw / Closely Contested,Pending,PENDING,Low
+2026-10-10,Serie A (Italy),Genoa CFC vs ACF Fiorentina,Genoa CFC,Pending,PENDING,High
+2026-10-10,Bundesliga (Germany),1. FSV Mainz 05 vs Bayer 04 Leverkusen,Bayer 04 Leverkusen,Pending,PENDING,Medium
+2026-10-10,Bundesliga (Germany),TSG 1899 Hoffenheim vs Hamburger SV,Hamburger SV,Pending,PENDING,High
+2026-10-10,Bundesliga (Germany),1. FC Union Berlin vs SV 07 Elversberg,1. FC Union Berlin,Pending,PENDING,Medium
+2026-10-10,Bundesliga (Germany),SC Paderborn 07 vs VfB Stuttgart,SC Paderborn 07,Pending,PENDING,Medium
+2026-10-10,Bundesliga (Germany),FC Augsburg vs FC Bayern München,FC Augsburg,Pending,PENDING,Medium
+2026-10-10,Premier League (England),Ipswich Town FC vs Fulham FC,Ipswich Town FC,Pending,PENDING,Medium
+2026-10-10,Premier League (England),Chelsea FC vs AFC Bournemouth,Chelsea FC,Pending,PENDING,Medium
+2026-10-10,Premier League (England),Aston Villa FC vs Brentford FC,Aston Villa FC,Pending,PENDING,Medium
+2026-10-10,Premier League (England),Sunderland AFC vs Brighton & Hove Albion FC,Sunderland AFC,Pending,PENDING,Medium
+2026-10-10,La Liga (Spain),Deportivo Alavés vs Club Atlético de Madrid,Deportivo Alavés,Pending,PENDING,Medium
+2026-10-10,Ligue 1 (France),Lille OSC vs Le Havre AC,Lille OSC,Pending,PENDING,Medium
+2026-10-10,Serie A (Italy),FC Internazionale Milano vs Parma Calcio 1913,FC Internazionale Milano,Pending,PENDING,Medium
+2026-10-10,La Liga (Spain),FC Barcelona vs Getafe CF,FC Barcelona,Pending,PENDING,Medium
+2026-10-10,Premier League (England),Manchester United FC vs Tottenham Hotspur FC,Manchester United FC,Pending,PENDING,Medium
+2026-10-10,Bundesliga (Germany),RB Leipzig vs Eintracht Frankfurt,RB Leipzig,Pending,PENDING,Medium
+2026-10-10,Ligue 1 (France),AS Monaco FC vs Toulouse FC,AS Monaco FC,Pending,PENDING,Medium
+2026-10-10,Ligue 1 (France),FC Lorient vs Paris FC,FC Lorient,Pending,PENDING,Medium
+2026-10-10,Ligue 1 (France),Stade Brestois 29 vs Angers SCO,Stade Brestois 29,Pending,PENDING,Medium
+2026-10-10,Serie A (Italy),SSC Napoli vs Frosinone Calcio,SSC Napoli,Pending,PENDING,Medium
+2026-10-10,Ligue 1 (France),Paris Saint-Germain FC vs Le Mans FC,Paris Saint-Germain FC,Pending,PENDING,Medium
+2026-10-10,La Liga (Spain),Real Madrid CF vs Villarreal CF,Real Madrid CF,Pending,PENDING,Medium
+2026-10-11,Serie A (Italy),Como 1907 vs AS Roma,Como 1907,Pending,PENDING,Medium
+2026-10-11,La Liga (Spain),Elche CF vs RC Celta de Vigo,Elche CF,Pending,PENDING,Medium
+2026-10-11,Serie A (Italy),US Lecce vs Bologna FC 1909,US Lecce,Pending,PENDING,Medium
+2026-10-11,Serie A (Italy),SS Lazio vs AC Monza,SS Lazio,Pending,PENDING,Medium
+2026-10-11,Premier League (England),Hull City AFC vs Everton FC,Hull City AFC,Pending,PENDING,Medium
+2026-10-11,Ligue 1 (France),OGC Nice vs RC Strasbourg Alsace,OGC Nice,Pending,PENDING,Medium
+2026-10-11,Premier League (England),Crystal Palace FC vs Nottingham Forest FC,Crystal Palace FC,Pending,PENDING,Medium
+2026-10-11,Bundesliga (Germany),1. FC Köln vs Borussia Mönchengladbach,1. FC Köln,Pending,PENDING,Medium
+2026-10-11,La Liga (Spain),Real Sociedad de Fútbol vs RC Deportivo La Coruña,Real Sociedad de Fútbol,Pending,PENDING,Medium
+2026-10-11,Ligue 1 (France),Stade Rennais FC 1901 vs AJ Auxerre,Stade Rennais FC 1901,Pending,PENDING,Medium
+2026-10-11,Bundesliga (Germany),SC Freiburg vs FC Schalke 04,SC Freiburg,Pending,PENDING,Medium
+2026-10-11,Premier League (England),Liverpool FC vs Manchester City FC,Liverpool FC,Pending,PENDING,Medium
+2026-10-11,Serie A (Italy),US Sassuolo Calcio vs AC Milan,US Sassuolo Calcio,Pending,PENDING,Medium
+2026-10-11,La Liga (Spain),Real Betis Balompié vs CA Osasuna,Real Betis Balompié,Pending,PENDING,Medium
+2026-10-11,Ligue 1 (France),ES Troyes AC vs Olympique de Marseille,ES Troyes AC,Pending,PENDING,Medium
+2026-10-11,Serie A (Italy),Cagliari Calcio vs Juventus FC,Cagliari Calcio,Pending,PENDING,Medium
+2026-10-11,La Liga (Spain),Real Racing Club de Santander vs Valencia CF,Real Racing Club de Santander,Pending,PENDING,Medium
+2026-10-12,Serie A (Italy),Atalanta BC vs Venezia FC,Atalanta BC,Pending,PENDING,Medium
+2026-10-12,Serie A (Italy),Torino FC vs Udinese Calcio,Torino FC,Pending,PENDING,Medium
+2026-10-12,Premier League (England),Coventry City FC vs Newcastle United FC,Coventry City FC,Pending,PENDING,Medium
+2026-10-12,La Liga (Spain),Levante UD vs Sevilla FC,Levante UD,Pending,PENDING,Medium
+2026-10-13,UEFA Champions League (Europe),Sabah FK vs SK Slavia Praha,Sabah FK,Pending,PENDING,Medium
+2026-10-13,UEFA Champions League (Europe),Racing Club de Lens vs Sporting Clube de Portugal,Racing Club de Lens,Pending,PENDING,Medium
+2026-10-13,UEFA Champions League (Europe),Galatasaray SK vs FC Barcelona,Galatasaray SK,Pending,PENDING,Medium
+2026-10-13,UEFA Champions League (Europe),Arsenal FC vs Lille OSC,Arsenal FC,Pending,PENDING,Medium
+2026-10-13,UEFA Champions League (Europe),RB Leipzig vs PSV,RB Leipzig,Pending,PENDING,Medium
+2026-10-13,UEFA Champions League (Europe),Villarreal CF vs SSC Napoli,Villarreal CF,Pending,PENDING,Medium
+2026-10-13,UEFA Champions League (Europe),Club Atlético de Madrid vs Manchester United FC,Club Atlético de Madrid,Pending,PENDING,Medium
+2026-10-13,UEFA Champions League (Europe),Viking FK vs FC Bayern München,Viking FK,Pending,PENDING,Medium
+2026-10-13,UEFA Champions League (Europe),FC Internazionale Milano vs Club Brugge KV,FC Internazionale Milano,Pending,PENDING,Medium
