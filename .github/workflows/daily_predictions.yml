@@ -1,13 +1,15 @@
-name: Daily European Football Predictions
+name: Daily European Football Predictions & Tracker
 
 on:
   schedule:
     - cron: '0 7 * * *' # Runs every day at 7:00 AM UTC
-  workflow_dispatch: # Allows manual trigger from the GitHub Actions tab
+  workflow_dispatch: # Allows manual trigger from GitHub Actions
 
 jobs:
   run-prediction:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Required to push tracker.csv updates back to the repo
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -22,10 +24,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run prediction pipeline
+      - name: Run prediction pipeline & tracker update
         env:
           FOOTBALL_API_KEY: ${{ secrets.FOOTBALL_API_KEY }}
           EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_RECEIVER: ${{ secrets.EMAIL_RECEIVER }}
         run: python main.py
+
+      - name: Commit and push tracker updates
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "actions@github.com"
+          git add tracker.csv
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update prediction accuracy tracker [skip ci]" && git push)
