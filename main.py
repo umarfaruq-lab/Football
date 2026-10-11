@@ -11,6 +11,8 @@ API_KEY = os.getenv("FOOTBALL_API_KEY")
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 BASE_URL = "https://api.football-data.org/v4"
 HEADERS = {"X-Auth-Token": API_KEY} if API_KEY else {}
@@ -34,7 +36,6 @@ LEAGUES = {
 TRACKER_FILE = "tracker.csv"
 
 def fetch_upcoming_matches():
-    """Fetches matches across all 12 free leagues from today up to the next 4 days."""
     today = datetime.now().strftime("%Y-%m-%d")
     future_date = (datetime.now() + timedelta(days=4)).strftime("%Y-%m-%d")
     
@@ -90,7 +91,6 @@ def analyze_and_predict(matches):
         home_id = match["homeTeam"]["id"]
         away_id = match["awayTeam"]["id"]
         
-        # Parse Kickoff Time
         utc_date_str = match.get("utcDate", "")
         try:
             dt_obj = datetime.strptime(utc_date_str, "%Y-%m-%dT%H:%M:%SZ")
@@ -125,6 +125,11 @@ def analyze_and_predict(matches):
         exp_away_goals = round((away_gf + home_ga) / 2, 2)
         total_exp_goals = round(exp_home_goals + exp_away_goals, 2)
         
+        # Additional Markets: BTTS & Over 2.5
+        btts = "Yes" if (exp_home_goals >= 0.85 and exp_away_goals >= 0.85) else "No"
+        over_2_5 = "Yes" if total_exp_goals >= 2.5 else "Under 2.5"
+        over_1_5 = "Yes" if total_exp_goals >= 1.6 else "Risky / Under"
+        
         # Head-to-Head Data
         h2h = fetch_h2h_data(match_id)
         home_h2h_wins = h2h.get("homeTeam", {}).get("wins", 0) if h2h else 0
@@ -136,7 +141,6 @@ def analyze_and_predict(matches):
         
         score_diff = home_score - away_score
         
-        # Precise Categorization
         if score_diff > 4.5:
             predicted_winner = home_team
             confidence = "High"
@@ -158,8 +162,6 @@ def analyze_and_predict(matches):
             confidence = "Low"
             double_chance = "Tight Match / Draw (12 or X)"
             
-        over_1_5 = "Yes" if total_exp_goals >= 1.6 else "Risky / Under"
-            
         predictions.append({
             "date": match_date_only,
             "kickoff": kickoff_display,
@@ -168,6 +170,8 @@ def analyze_and_predict(matches):
             "prediction": predicted_winner,
             "confidence": confidence,
             "double_chance": double_chance,
+            "btts": btts,
+            "over_2_5": over_2_5,
             "over_1_5": over_1_5,
             "exp_goals": f"{exp_home_goals} - {exp_away_goals} (Tot: {total_exp_goals})"
         })
@@ -229,6 +233,36 @@ def update_tracker_and_evaluate(new_predictions):
     df.to_csv(TRACKER_FILE, index=False)
     return df
 
+def calculate_tier_analytics(tracker_df):
+    """Calculates granular success rates broken down by confidence tier."""
+    completed = tracker_df[tracker_df["Status"].isin(["WON", "LOST"])]
+    if completed.empty:
+        return "No completed matches evaluated yet."
+    
+    analytics_summary = ""
+    for tier in ["High", "Medium", "Low"]:
+        tier_df = completed[completed["Confidence"] == tier]
+        total = len(tier_df)
+        won = len(tier_df[tier_df["Status"] == "WON"])
+        rate = (won / total * 100) if total > 0 else 0.0
+        analytics_summary += f"• <b>{tier} Confidence:</b> {won}/{total} Won ({rate:.1f}%)\n"
+    return analytics_summary
+
+def send_telegram_alert(message):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("Telegram credentials missing. Skipping mobile alert.")
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
+    try:
+        response = requests.post(url, json=payload)
+        if response.status_code == 200:
+            print("Telegram alert sent successfully!")
+        else:
+            print(f"Failed to send Telegram alert: {response.text}")
+    except Exception as e:
+        print(f"Telegram error: {e}")
+
 def send_email(predictions, tracker_df):
     if not EMAIL_SENDER or not EMAIL_PASSWORD or not EMAIL_RECEIVER:
         print("Email credentials missing.")
@@ -237,51 +271,56 @@ def send_email(predictions, tracker_df):
     completed = tracker_df[tracker_df["Status"].isin(["WON", "LOST"])]
     total_completed = len(completed)
     total_won = len(completed[completed["Status"] == "WON"])
-    accuracy_pct = (total_won / total_completed * 100) if total_completed > 0 else 0.0
+    overall_accuracy = (total_won / total_completed * 100) if total_completed > 0 else 0.0
 
-    html_content = "<h2>⚽ Global 12-League Football Predictions & Shortlists</h2>"
-    html_content += f"<p>Report generated on <b>{datetime.now().strftime('%Y-%m-%d')}</b> covering all 12 free competitions for the next 4 days.</p>"
+    tier_breakdown = calculate_tier_analytics(tracker_df)
+
+    html_content = "<h2>⚽ Pro Football Analytics & Market Report</h2>"
+    html_content += f"<p>Report generated on <b>{datetime.now().strftime('%Y-%m-%d')}</b> covering all 12 leagues.</p>"
     
+    # Overall & Tier Analytics Banner
     html_content += f"<div style='background: #e9ecef; padding: 10px; border-radius: 5px; margin-bottom: 15px;'>"
-    html_content += f"<b>Model Track Record:</b> {total_won} Won / {total_completed} Completed ({accuracy_pct:.1f}% Success Rate)"
+    html_content += f"<b>Overall Model Track Record:</b> {total_won}/{total_completed} Completed ({overall_accuracy:.1f}% Success)<br>"
+    html_content += f"<b>Performance by Tier:</b><br>{tier_breakdown.replace(chr(10), '<br>')}"
     html_content += "</div>"
 
     if not predictions:
-        html_content += "<p><b>No upcoming matches found in the next 4 days across the 12 monitored leagues.</b></p>"
+        html_content += "<p><b>No upcoming matches found in the next 4 days across monitored leagues.</b></p>"
+        telegram_msg = "⚽ <b>Football Predictions</b>\nNo upcoming matches found in the 4-day window."
     else:
         html_content += "<h3>📅 Full Upcoming Fixtures Table</h3>"
-        html_content += "<table border='1' cellspacing='0' cellpadding='6' style='border-collapse: collapse; width: 100%; font-family: sans-serif; font-size: 12px;'>"
-        html_content += "<tr style='background-color: #f8f9fa;'><th>Kickoff</th><th>League</th><th>Matchup</th><th>Prediction</th><th>Confidence</th><th>Double Chance</th><th>Over 1.5</th></tr>"
+        html_content += "<table border='1' cellspacing='0' cellpadding='5' style='border-collapse: collapse; width: 100%; font-family: sans-serif; font-size: 11px;'>"
+        html_content += "<tr style='background-color: #f8f9fa;'><th>Kickoff</th><th>League</th><th>Matchup</th><th>Pick</th><th>Conf</th><th>BTTS</th><th>O 2.5</th></tr>"
         
-        high_list, med_list, low_list, over_15_list, dc_list = [], [], [], [], []
+        high_list, med_list, btts_list, over25_list = [], [], [], []
 
         for p in predictions:
-            html_content += f"<tr><td>{p['kickoff']}</td><td>{p['league']}</td><td>{p['match']}</td><td><b>{p['prediction']}</b></td><td>{p['confidence']}</td><td>{p['double_chance']}</td><td>{p['over_1_5']}</td></tr>"
+            html_content += f"<tr><td>{p['kickoff']}</td><td>{p['league']}</td><td>{p['match']}</td><td><b>{p['prediction']}</b></td><td>{p['confidence']}</td><td>{p['btts']}</td><td>{p['over_2_5']}</td></tr>"
             
-            item_desc = f"<b>{p['match']}</b> ({p['league']}) ➔ <b>Kickoff: {p['kickoff']}</b> | Pick: <b>{p['prediction']}</b> | xG: {p['exp_goals']}"
+            item_desc = f"<b>{p['match']}</b> ({p['league']}) ➔ Kickoff: {p['kickoff']} | Pick: <b>{p['prediction']}</b> | xG: {p['exp_goals']}"
+            if p['confidence'] == 'High': high_list.append(item_desc)
+            elif p['confidence'] == 'Medium': med_list.append(item_desc)
             
-            if p['confidence'] == 'High':
-                high_list.append(item_desc)
-            elif p['confidence'] == 'Medium':
-                med_list.append(item_desc)
-            else:
-                low_list.append(item_desc)
-                
-            if p['over_1_5'] == 'Yes':
-                over_15_list.append(f"<b>{p['match']}</b> ({p['kickoff']}) ➔ xG: {p['exp_goals']}")
-                
-            dc_list.append(f"<b>{p['match']}</b> ({p['kickoff']}) ➔ {p['double_chance']}")
+            if p['btts'] == 'Yes': btts_list.append(f"<b>{p['match']}</b> ({p['kickoff']})")
+            if p['over_2_5'] == 'Yes': over25_list.append(f"<b>{p['match']}</b> ({p['kickoff']})")
 
         html_content += "</table>"
 
-        html_content += "<h3 style='color: #2b8a3e;'>🔥 High Probability Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in high_list]) if high_list else "<li>No high probability matches in this window.</li>") + "</ul>"
-        html_content += "<h3 style='color: #1971c2;'>⚡ Medium Probability Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in med_list]) if med_list else "<li>No medium probability matches in this window.</li>") + "</ul>"
-        html_content += "<h3 style='color: #e67700;'>⚠️ Low Probability / Tight Matches Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in low_list]) if low_list else "<li>No low probability/tight matches in this window.</li>") + "</ul>"
-        html_content += "<h3>🛡️ Double Chance Recommendations</h3><ul>" + ("".join([f"<li>{x}</li>" for x in dc_list]) if dc_list else "<li>None available.</li>") + "</ul>"
-        html_content += "<h3>⚽ Matches Expected Over 1.5 Goals</h3><ul>" + ("".join([f"<li>{x}</li>" for x in over_15_list]) if over_15_list else "<li>None expected over 1.5 goals in this window.</li>") + "</ul>"
+        html_content += "<h3 style='color: #2b8a3e;'>🔥 High Probability Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in high_list]) if high_list else "<li>None today.</li>") + "</ul>"
+        html_content += "<h3 style='color: #1971c2;'>⚡ Both Teams to Score (BTTS) Targets</h3><ul>" + ("".join([f"<li>{x}</li>" for x in btts_list]) if btts_list else "<li>None today.</li>") + "</ul>"
+        html_content += "<h3>⚽ Over 2.5 Goals Targets</h3><ul>" + ("".join([f"<li>{x}</li>" for x in over25_list]) if over25_list else "<li>None today.</li>") + "</ul>"
 
+        # Construct Telegram Push Alert
+        telegram_msg = f"⚽ <b>Football Predictions Report</b>\n\n"
+        telegram_msg += f"📊 <b>Accuracy:</b> {overall_accuracy:.1f}%\n"
+        if high_list:
+            telegram_msg += f"\n🔥 <b>High Confidence Picks:</b>\n" + "\n".join([f"• {item}" for item in high_list[:5]])
+        if btts_list:
+            telegram_msg += f"\n\n⚡ <b>BTTS Targets:</b>\n" + "\n".join([f"• {item}" for item in btts_list[:5]])
+
+    # Send Email
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"12-League Football Predictions & Shortlists - {datetime.now().strftime('%Y-%m-%d')}"
+    msg["Subject"] = f"Pro Football Predictions & Analytics - {datetime.now().strftime('%Y-%m-%d')}"
     msg["From"] = EMAIL_SENDER
     msg["To"] = EMAIL_RECEIVER
     msg.attach(MIMEText(html_content, "html"))
@@ -290,12 +329,15 @@ def send_email(predictions, tracker_df):
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
             server.sendmail(EMAIL_SENDER, EMAIL_RECEIVER, msg.as_string())
-        print("Predictions email sent successfully!")
+        print("Email report sent successfully!")
     except Exception as e:
         print(f"Failed to send email: {e}")
 
+    # Send Telegram Notification
+    send_telegram_alert(telegram_msg)
+
 if __name__ == "__main__":
-    print("Running 12-league fixture and prediction engine...")
+    print("Running advanced pro football analytics pipeline...")
     matches = fetch_upcoming_matches()
     predictions = analyze_and_predict(matches)
     tracker_df = update_tracker_and_evaluate(predictions)
