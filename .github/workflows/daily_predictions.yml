@@ -1,15 +1,15 @@
-name: Daily European Football Predictions & Tracker
+name: Daily Football Predictions & Tracker
 
 on:
   schedule:
-    - cron: '0 7 * * *' # Runs every day at 7:00 AM UTC
-  workflow_dispatch: # Allows manual trigger from GitHub Actions
+    - cron: '0 7 * * *' # Runs at 7:00 AM UTC (7:00 AM Sierra Leone Time) every day
+  workflow_dispatch: # Allows manual trigger from the GitHub Actions tab
 
 jobs:
   run-prediction:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Required to push tracker.csv updates back to the repo
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
