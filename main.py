@@ -112,7 +112,32 @@ def calculate_kelly_stake(confidence, bankroll=100.0):
         return round(bankroll * 0.01, 2) # 1% stake
     else:
         return round(bankroll * 0.005, 2) # 0.5% stake for tight matches
+import math
 
+def calculate_poisson_probabilities(exp_home, exp_away, max_goals=6):
+    """Calculates exact match outcome probabilities using Poisson distribution."""
+    home_win_prob = 0.0
+    draw_prob = 0.0
+    away_win_prob = 0.0
+    
+    # Calculate probability matrix for scorelines up to max_goals (e.g., 6x6)
+    for i in range(max_goals + 1): # Home goals
+        for j in range(max_goals + 1): # Away goals
+            # Poisson probability mass function for home and away teams
+            p_home = (math.pow(exp_home, i) * math.exp(-exp_home)) / math.factorial(i)
+            p_away = (math.pow(exp_away, j) * math.exp(-exp_away)) / math.factorial(j)
+            
+            # Joint probability of this exact scoreline
+            scoreline_prob = p_home * p_away
+            
+            if i > j:
+                home_win_prob += scoreline_prob
+            elif i == j:
+                draw_prob += scoreline_prob
+            else:
+                away_win_prob += scoreline_prob
+                
+    return round(home_win_prob * 100, 1), round(draw_prob * 100, 1), round(away_win_prob * 100, 1)
 def analyze_and_predict(matches):
     predictions = []
     
