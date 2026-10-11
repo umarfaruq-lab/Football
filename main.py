@@ -15,20 +15,26 @@ EMAIL_RECEIVER = os.getenv("EMAIL_RECEIVER")
 BASE_URL = "https://api.football-data.org/v4"
 HEADERS = {"X-Auth-Token": API_KEY} if API_KEY else {}
 
-# Expanded Leagues including UEFA Champions League
+# All 12 Free-Tier Competitions on football-data.org
 LEAGUES = {
     "PL": "Premier League (England)",
+    "ELC": "Championship (England)",
     "PD": "La Liga (Spain)",
     "SA": "Serie A (Italy)",
     "BL1": "Bundesliga (Germany)",
     "FL1": "Ligue 1 (France)",
-    "CL": "UEFA Champions League (Europe)"
+    "DED": "Eredivisie (Netherlands)",
+    "PPL": "Primeira Liga (Portugal)",
+    "BSA": "Campeonato Brasileiro Série A (Brazil)",
+    "CL": "UEFA Champions League (Europe)",
+    "EC": "European Championship (Europe)",
+    "WC": "FIFA World Cup (World)"
 }
 
 TRACKER_FILE = "tracker.csv"
 
 def fetch_upcoming_matches():
-    """Fetches matches from today up to the next 4 days to ensure games are always found."""
+    """Fetches matches across all 12 free leagues from today up to the next 4 days."""
     today = datetime.now().strftime("%Y-%m-%d")
     future_date = (datetime.now() + timedelta(days=4)).strftime("%Y-%m-%d")
     
@@ -41,7 +47,7 @@ def fetch_upcoming_matches():
         
     matches = response.json().get("matches", [])
     filtered_matches = [m for m in matches if m.get("competition", {}).get("code") in LEAGUES]
-    print(f"Found {len(filtered_matches)} upcoming matches across monitored leagues.")
+    print(f"Found {len(filtered_matches)} upcoming matches across all 12 free leagues.")
     return filtered_matches
 
 def fetch_league_standings(competition_code):
@@ -225,9 +231,7 @@ def update_tracker_and_evaluate(new_predictions):
 
 def send_email(predictions, tracker_df):
     if not EMAIL_SENDER or not EMAIL_PASSWORD or not EMAIL_RECEIVER:
-        print("Email credentials missing. Printing summary to console:")
-        for p in predictions:
-            print(p)
+        print("Email credentials missing.")
         return
 
     completed = tracker_df[tracker_df["Status"].isin(["WON", "LOST"])]
@@ -235,17 +239,16 @@ def send_email(predictions, tracker_df):
     total_won = len(completed[completed["Status"] == "WON"])
     accuracy_pct = (total_won / total_completed * 100) if total_completed > 0 else 0.0
 
-    html_content = "<h2>⚽ Upcoming Football Predictions & Market Shortlists</h2>"
-    html_content += f"<p>Report generated on <b>{datetime.now().strftime('%Y-%m-%d')}</b> covering fixtures for the next 4 days.</p>"
+    html_content = "<h2>⚽ Global 12-League Football Predictions & Shortlists</h2>"
+    html_content += f"<p>Report generated on <b>{datetime.now().strftime('%Y-%m-%d')}</b> covering all 12 free competitions for the next 4 days.</p>"
     
     html_content += f"<div style='background: #e9ecef; padding: 10px; border-radius: 5px; margin-bottom: 15px;'>"
     html_content += f"<b>Model Track Record:</b> {total_won} Won / {total_completed} Completed ({accuracy_pct:.1f}% Success Rate)"
     html_content += "</div>"
 
     if not predictions:
-        html_content += "<p><b>No upcoming matches found in the next 4 days across monitored leagues (likely an international break window).</b></p>"
+        html_content += "<p><b>No upcoming matches found in the next 4 days across the 12 monitored leagues.</b></p>"
     else:
-        # Master Table
         html_content += "<h3>📅 Full Upcoming Fixtures Table</h3>"
         html_content += "<table border='1' cellspacing='0' cellpadding='6' style='border-collapse: collapse; width: 100%; font-family: sans-serif; font-size: 12px;'>"
         html_content += "<tr style='background-color: #f8f9fa;'><th>Kickoff</th><th>League</th><th>Matchup</th><th>Prediction</th><th>Confidence</th><th>Double Chance</th><th>Over 1.5</th></tr>"
@@ -271,19 +274,14 @@ def send_email(predictions, tracker_df):
 
         html_content += "</table>"
 
-        # Categorized Sections
         html_content += "<h3 style='color: #2b8a3e;'>🔥 High Probability Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in high_list]) if high_list else "<li>No high probability matches in this window.</li>") + "</ul>"
-        
         html_content += "<h3 style='color: #1971c2;'>⚡ Medium Probability Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in med_list]) if med_list else "<li>No medium probability matches in this window.</li>") + "</ul>"
-        
         html_content += "<h3 style='color: #e67700;'>⚠️ Low Probability / Tight Matches Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in low_list]) if low_list else "<li>No low probability/tight matches in this window.</li>") + "</ul>"
-        
         html_content += "<h3>🛡️ Double Chance Recommendations</h3><ul>" + ("".join([f"<li>{x}</li>" for x in dc_list]) if dc_list else "<li>None available.</li>") + "</ul>"
-        
         html_content += "<h3>⚽ Matches Expected Over 1.5 Goals</h3><ul>" + ("".join([f"<li>{x}</li>" for x in over_15_list]) if over_15_list else "<li>None expected over 1.5 goals in this window.</li>") + "</ul>"
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Football Predictions & Shortlists - {datetime.now().strftime('%Y-%m-%d')}"
+    msg["Subject"] = f"12-League Football Predictions & Shortlists - {datetime.now().strftime('%Y-%m-%d')}"
     msg["From"] = EMAIL_SENDER
     msg["To"] = EMAIL_RECEIVER
     msg.attach(MIMEText(html_content, "html"))
@@ -297,7 +295,7 @@ def send_email(predictions, tracker_df):
         print(f"Failed to send email: {e}")
 
 if __name__ == "__main__":
-    print("Running look-ahead fixture and prediction engine...")
+    print("Running 12-league fixture and prediction engine...")
     matches = fetch_upcoming_matches()
     predictions = analyze_and_predict(matches)
     tracker_df = update_tracker_and_evaluate(predictions)
