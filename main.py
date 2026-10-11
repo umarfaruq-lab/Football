@@ -1,10 +1,15 @@
 import os
+import time
 import requests
 from datetime import datetime, timedelta
 import pandas as pd
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.image import MIMEImage
+import matplotlib
+matplotlib.use('Agg') # Non-interactive backend for server environments
+import matplotlib.pyplot as plt
 
 # Environment Variables injected securely from GitHub Secrets
 API_KEY = os.getenv("FOOTBALL_API_KEY")
@@ -34,27 +39,46 @@ LEAGUES = {
 }
 
 TRACKER_FILE = "tracker.csv"
+CHART_FILE = "performance_chart.png"
+
+def robust_api_get(url, retries=3, backoff_factor=2):
+    """Robust API request wrapper with exponential backoff for rate limits and connection drops."""
+    for attempt in range(retries):
+        try:
+            response = requests.get(url, headers=HEADERS, timeout=10)
+            if response.status_code == 200:
+                return response
+            elif response.status_code == 429:
+                sleep_time = backoff_factor * (attempt + 1)
+                print(f"Rate limited (429). Retrying in {sleep_time}s...")
+                time.sleep(sleep_time)
+            else:
+                print(f"API Error {response.status_code}: {response.text}")
+                return response
+        except Exception as e:
+            sleep_time = backoff_factor * (attempt + 1)
+            print(f"Request exception ({e}). Retrying in {sleep_time}s...")
+            time.sleep(sleep_time)
+    return None
 
 def fetch_upcoming_matches():
     today = datetime.now().strftime("%Y-%m-%d")
     future_date = (datetime.now() + timedelta(days=4)).strftime("%Y-%m-%d")
-    
     url = f"{BASE_URL}/matches?dateFrom={today}&dateTo={future_date}"
-    response = requests.get(url, headers=HEADERS)
     
-    if response.status_code != 200:
-        print(f"Error fetching matches: {response.status_code} - {response.text}")
+    response = robust_api_get(url)
+    if not response or response.status_code != 200:
         return []
         
     matches = response.json().get("matches", [])
     filtered_matches = [m for m in matches if m.get("competition", {}).get("code") in LEAGUES]
-    print(f"Found {len(filtered_matches)} upcoming matches across all 12 free leagues.")
+    print(f"Found {len(filtered_matches)} upcoming matches across monitored leagues.")
     return filtered_matches
 
 def fetch_league_standings(competition_code):
     url = f"{BASE_URL}/competitions/{competition_code}/standings"
-    response = requests.get(url, headers=HEADERS)
-    if response.status_code != 200:
+    response = robust_api_get(url)
+    if not response or response.status_code != 200:
         return {}
     standings_data = response.json().get("standings", [])
     for table in standings_data:
@@ -64,8 +88,8 @@ def fetch_league_standings(competition_code):
 
 def fetch_h2h_data(match_id):
     url = f"{BASE_URL}/matches/{match_id}/head2head"
-    response = requests.get(url, headers=HEADERS)
-    if response.status_code != 200:
+    response = robust_api_get(url)
+    if not response or response.status_code != 200:
         return None
     return response.json().get("aggregates", {})
 
@@ -79,6 +103,15 @@ def parse_form_score(form_str):
         elif char == 'D': score += 1
         elif char == 'L': score -= 1
     return score
+
+def calculate_kelly_stake(confidence, bankroll=100.0):
+    """Calculates suggested bankroll stake using fractional Kelly principles."""
+    if confidence == "High":
+        return round(bankroll * 0.02, 2) # 2% stake
+    elif confidence == "Medium":
+        return round(bankroll * 0.01, 2) # 1% stake
+    else:
+        return round(bankroll * 0.005, 2) # 0.5% stake for tight matches
 
 def analyze_and_predict(matches):
     predictions = []
@@ -125,42 +158,31 @@ def analyze_and_predict(matches):
         exp_away_goals = round((away_gf + home_ga) / 2, 2)
         total_exp_goals = round(exp_home_goals + exp_away_goals, 2)
         
-        # Additional Markets: BTTS & Over 2.5
         btts = "Yes" if (exp_home_goals >= 0.85 and exp_away_goals >= 0.85) else "No"
         over_2_5 = "Yes" if total_exp_goals >= 2.5 else "Under 2.5"
         over_1_5 = "Yes" if total_exp_goals >= 1.6 else "Risky / Under"
         
-        # Head-to-Head Data
         h2h = fetch_h2h_data(match_id)
         home_h2h_wins = h2h.get("homeTeam", {}).get("wins", 0) if h2h else 0
         away_h2h_wins = h2h.get("awayTeam", {}).get("wins", 0) if h2h else 0
         
-        # Weighted Scoring Model
         home_score = (20 - home_position) * 1.2 + (home_points * 0.3) + (home_form_pts * 0.8) + (home_h2h_wins * 0.5) + 3.0
         away_score = (20 - away_position) * 1.2 + (away_points * 0.3) + (away_form_pts * 0.8) + (away_h2h_wins * 0.5)
         
         score_diff = home_score - away_score
         
         if score_diff > 4.5:
-            predicted_winner = home_team
-            confidence = "High"
-            double_chance = f"{home_team} or Draw (1X)"
+            predicted_winner, confidence, double_chance = home_team, "High", f"{home_team} or Draw (1X)"
         elif score_diff < -4.5:
-            predicted_winner = away_team
-            confidence = "High"
-            double_chance = f"{away_team} or Draw (X2)"
+            predicted_winner, confidence, double_chance = away_team, "High", f"{away_team} or Draw (X2)"
         elif 2.0 <= score_diff <= 4.5:
-            predicted_winner = home_team
-            confidence = "Medium"
-            double_chance = f"{home_team} or Draw (1X)"
+            predicted_winner, home_team, confidence, double_chance = home_team, home_team, "Medium", f"{home_team} or Draw (1X)"
         elif -4.5 <= score_diff <= -2.0:
-            predicted_winner = away_team
-            confidence = "Medium"
-            double_chance = f"{away_team} or Draw (X2)"
+            predicted_winner, confidence, double_chance = away_team, "Medium", f"{away_team} or Draw (X2)"
         else:
-            predicted_winner = "Draw / Closely Contested"
-            confidence = "Low"
-            double_chance = "Tight Match / Draw (12 or X)"
+            predicted_winner, confidence, double_chance = "Draw / Closely Contested", "Low", "Tight Match / Draw (12 or X)"
+            
+        recommended_stake = calculate_kelly_stake(confidence)
             
         predictions.append({
             "date": match_date_only,
@@ -169,6 +191,7 @@ def analyze_and_predict(matches):
             "match": f"{home_team} vs {away_team}",
             "prediction": predicted_winner,
             "confidence": confidence,
+            "stake": f"${recommended_stake}",
             "double_chance": double_chance,
             "btts": btts,
             "over_2_5": over_2_5,
@@ -189,9 +212,9 @@ def update_tracker_and_evaluate(new_predictions):
         oldest_date = pending_rows["Date"].min()
         today_str = datetime.now().strftime("%Y-%m-%d")
         url = f"{BASE_URL}/matches?dateFrom={oldest_date}&dateTo={today_str}"
-        response = requests.get(url, headers=HEADERS)
+        response = robust_api_get(url)
         
-        if response.status_code == 200:
+        if response and response.status_code == 200:
             finished_matches = response.json().get("matches", [])
             for idx, row in pending_rows.iterrows():
                 match_desc = row["Match"]
@@ -233,33 +256,58 @@ def update_tracker_and_evaluate(new_predictions):
     df.to_csv(TRACKER_FILE, index=False)
     return df
 
-def calculate_tier_analytics(tracker_df):
-    """Calculates granular success rates broken down by confidence tier."""
+def generate_performance_chart(tracker_df):
+    """Generates an equity curve performance chart and saves it as an image."""
+    completed = tracker_df[tracker_df["Status"].isin(["WON", "LOST"])].copy()
+    if len(completed) < 2:
+        return None
+        
+    completed['ResultNum'] = completed['Status'].apply(lambda x: 1 if x == 'WON' else -1)
+    completed['Cumulative'] = completed['ResultNum'].cumsum()
+    
+    plt.figure(figsize=(8, 4))
+    plt.plot(range(len(completed)), completed['Cumulative'], marker='o', color='#2b8a3e', linewidth=2, markersize=5)
+    plt.title("Model Cumulative Performance Equity Curve", fontsize=12, fontweight='bold', color='#333333')
+    plt.xlabel("Completed Matches", fontsize=10)
+    plt.ylabel("Net Wins / Units", fontsize=10)
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.tight_layout()
+    
+    plt.savefig(CHART_FILE, dpi=150)
+    plt.close()
+    return CHART_FILE
+
+def calculate_analytics_summaries(tracker_df):
     completed = tracker_df[tracker_df["Status"].isin(["WON", "LOST"])]
     if completed.empty:
-        return "No completed matches evaluated yet."
+        return "No completed matches evaluated yet.", "No completed matches evaluated yet."
     
-    analytics_summary = ""
+    # Tier Breakdown
+    tier_summary = ""
     for tier in ["High", "Medium", "Low"]:
         tier_df = completed[completed["Confidence"] == tier]
         total = len(tier_df)
         won = len(tier_df[tier_df["Status"] == "WON"])
         rate = (won / total * 100) if total > 0 else 0.0
-        analytics_summary += f"• <b>{tier} Confidence:</b> {won}/{total} Won ({rate:.1f}%)\n"
-    return analytics_summary
+        tier_summary += f"• <b>{tier} Confidence:</b> {won}/{total} ({rate:.1f}%)\n"
+        
+    # League Breakdown
+    league_summary = ""
+    for league, group in completed.groupby("League"):
+        total = len(group)
+        won = len(group[group["Status"] == "WON"])
+        rate = (won / total * 100) if total > 0 else 0.0
+        league_summary += f"• <b>{league}:</b> {won}/{total} ({rate:.1f}%)\n"
+        
+    return tier_summary, league_summary
 
 def send_telegram_alert(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("Telegram credentials missing. Skipping mobile alert.")
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
     try:
-        response = requests.post(url, json=payload)
-        if response.status_code == 200:
-            print("Telegram alert sent successfully!")
-        else:
-            print(f"Failed to send Telegram alert: {response.text}")
+        requests.post(url, json=payload, timeout=5)
     except Exception as e:
         print(f"Telegram error: {e}")
 
@@ -273,34 +321,37 @@ def send_email(predictions, tracker_df):
     total_won = len(completed[completed["Status"] == "WON"])
     overall_accuracy = (total_won / total_completed * 100) if total_completed > 0 else 0.0
 
-    tier_breakdown = calculate_tier_analytics(tracker_df)
+    tier_breakdown, league_breakdown = calculate_analytics_summaries(tracker_df)
+    chart_path = generate_performance_chart(tracker_df)
 
-    html_content = "<h2>⚽ Pro Football Analytics & Market Report</h2>"
-    html_content += f"<p>Report generated on <b>{datetime.now().strftime('%Y-%m-%d')}</b> covering all 12 leagues.</p>"
+    html_content = "<h2>⚽ Institutional Pro Football Analytics Report</h2>"
+    html_content += f"<p>Report generated on <b>{datetime.now().strftime('%Y-%m-%d')}</b> with automated risk management and performance charts.</p>"
     
-    # Overall & Tier Analytics Banner
     html_content += f"<div style='background: #e9ecef; padding: 10px; border-radius: 5px; margin-bottom: 15px;'>"
-    html_content += f"<b>Overall Model Track Record:</b> {total_won}/{total_completed} Completed ({overall_accuracy:.1f}% Success)<br>"
-    html_content += f"<b>Performance by Tier:</b><br>{tier_breakdown.replace(chr(10), '<br>')}"
+    html_content += f"<b>Overall Accuracy:</b> {total_won}/{total_completed} ({overall_accuracy:.1f}%)<br><br>"
+    html_content += f"<b>Performance by Tier:</b><br>{tier_breakdown.replace(chr(10), '<br>')}<br>"
+    html_content += f"<b>Performance by League:</b><br>{league_breakdown.replace(chr(10), '<br>')}"
     html_content += "</div>"
+
+    if chart_path and os.path.exists(chart_path):
+        html_content += "<h3>📈 Model Equity Curve</h3>"
+        html_content += "<p><img src='cid:performancechart' style='max-width: 100%; height: auto; border-radius: 5px;'></p>"
 
     if not predictions:
         html_content += "<p><b>No upcoming matches found in the next 4 days across monitored leagues.</b></p>"
         telegram_msg = "⚽ <b>Football Predictions</b>\nNo upcoming matches found in the 4-day window."
     else:
-        html_content += "<h3>📅 Full Upcoming Fixtures Table</h3>"
+        html_content += "<h3>📅 Full Upcoming Fixtures & Staking Table</h3>"
         html_content += "<table border='1' cellspacing='0' cellpadding='5' style='border-collapse: collapse; width: 100%; font-family: sans-serif; font-size: 11px;'>"
-        html_content += "<tr style='background-color: #f8f9fa;'><th>Kickoff</th><th>League</th><th>Matchup</th><th>Pick</th><th>Conf</th><th>BTTS</th><th>O 2.5</th></tr>"
+        html_content += "<tr style='background-color: #f8f9fa;'><th>Kickoff</th><th>League</th><th>Matchup</th><th>Pick</th><th>Conf</th><th>Stake</th><th>BTTS</th><th>O 2.5</th></tr>"
         
-        high_list, med_list, btts_list, over25_list = [], [], [], []
+        high_list, btts_list, over25_list = [], [], []
 
         for p in predictions:
-            html_content += f"<tr><td>{p['kickoff']}</td><td>{p['league']}</td><td>{p['match']}</td><td><b>{p['prediction']}</b></td><td>{p['confidence']}</td><td>{p['btts']}</td><td>{p['over_2_5']}</td></tr>"
+            html_content += f"<tr><td>{p['kickoff']}</td><td>{p['league']}</td><td>{p['match']}</td><td><b>{p['prediction']}</b></td><td>{p['confidence']}</td><td>{p['stake']}</td><td>{p['btts']}</td><td>{p['over_2_5']}</td></tr>"
             
-            item_desc = f"<b>{p['match']}</b> ({p['league']}) ➔ Kickoff: {p['kickoff']} | Pick: <b>{p['prediction']}</b> | xG: {p['exp_goals']}"
+            item_desc = f"<b>{p['match']}</b> ({p['league']}) ➔ Stake: <b>{p['stake']}</b> | Pick: <b>{p['prediction']}</b> | xG: {p['exp_goals']}"
             if p['confidence'] == 'High': high_list.append(item_desc)
-            elif p['confidence'] == 'Medium': med_list.append(item_desc)
-            
             if p['btts'] == 'Yes': btts_list.append(f"<b>{p['match']}</b> ({p['kickoff']})")
             if p['over_2_5'] == 'Yes': over25_list.append(f"<b>{p['match']}</b> ({p['kickoff']})")
 
@@ -310,34 +361,40 @@ def send_email(predictions, tracker_df):
         html_content += "<h3 style='color: #1971c2;'>⚡ Both Teams to Score (BTTS) Targets</h3><ul>" + ("".join([f"<li>{x}</li>" for x in btts_list]) if btts_list else "<li>None today.</li>") + "</ul>"
         html_content += "<h3>⚽ Over 2.5 Goals Targets</h3><ul>" + ("".join([f"<li>{x}</li>" for x in over25_list]) if over25_list else "<li>None today.</li>") + "</ul>"
 
-        # Construct Telegram Push Alert
-        telegram_msg = f"⚽ <b>Football Predictions Report</b>\n\n"
-        telegram_msg += f"📊 <b>Accuracy:</b> {overall_accuracy:.1f}%\n"
+        telegram_msg = f"⚽ <b>Pro Football Report</b>\n📊 <b>Accuracy:</b> {overall_accuracy:.1f}%\n"
         if high_list:
-            telegram_msg += f"\n🔥 <b>High Confidence Picks:</b>\n" + "\n".join([f"• {item}" for item in high_list[:5]])
-        if btts_list:
-            telegram_msg += f"\n\n⚡ <b>BTTS Targets:</b>\n" + "\n".join([f"• {item}" for item in btts_list[:5]])
+            telegram_msg += f"\n🔥 <b>High Conf Picks & Stakes:</b>\n" + "\n".join([f"• {item}" for item in high_list[:4]])
 
-    # Send Email
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"Pro Football Predictions & Analytics - {datetime.now().strftime('%Y-%m-%d')}"
+    # Construct Multipart Email with Embedded Image
+    msg = MIMEMultipart("related")
+    msg["Subject"] = f"Institutional Football Analytics & Equity Curve - {datetime.now().strftime('%Y-%m-%d')}"
     msg["From"] = EMAIL_SENDER
     msg["To"] = EMAIL_RECEIVER
-    msg.attach(MIMEText(html_content, "html"))
+    
+    msg_alternative = MIMEMultipart("alternative")
+    msg.attach(msg_alternative)
+    msg_alternative.attach(MIMEText(html_content, "html"))
+
+    # Attach chart image inline if available
+    if chart_path and os.path.exists(chart_path):
+        with open(chart_path, "rb") as img_file:
+            msg_image = MIMEImage(img_file.read())
+            msg_image.add_header('Content-ID', '<performancechart>')
+            msg_image.add_header('Content-Disposition', 'inline', filename=CHART_FILE)
+            msg.attach(msg_image)
 
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
             server.sendmail(EMAIL_SENDER, EMAIL_RECEIVER, msg.as_string())
-        print("Email report sent successfully!")
+        print("Institutional email report with embedded chart sent successfully!")
     except Exception as e:
         print(f"Failed to send email: {e}")
 
-    # Send Telegram Notification
     send_telegram_alert(telegram_msg)
 
 if __name__ == "__main__":
-    print("Running advanced pro football analytics pipeline...")
+    print("Running institutional quantitative football analytics pipeline...")
     matches = fetch_upcoming_matches()
     predictions = analyze_and_predict(matches)
     tracker_df = update_tracker_and_evaluate(predictions)
