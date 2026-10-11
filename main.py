@@ -2,6 +2,7 @@ import os
 import time
 import math
 import sqlite3
+import logging
 import requests
 from datetime import datetime, timedelta
 import pandas as pd
@@ -10,8 +11,15 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.image import MIMEImage
 import matplotlib
-matplotlib.use('Agg') # Non-interactive backend for server environments
+matplotlib.use('Agg')  # Non-interactive backend for server environments
 import matplotlib.pyplot as plt
+
+# Configure Professional Enterprise Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler()]
+)
 
 # Environment Variables injected securely from GitHub Secrets
 API_KEY = os.getenv("FOOTBALL_API_KEY")
@@ -61,6 +69,7 @@ def init_db():
     ''')
     conn.commit()
     conn.close()
+    logging.info("SQLite database initialized successfully.")
 
 def robust_api_get(url, retries=3, backoff_factor=2):
     """Robust API request wrapper with exponential backoff for rate limits and connection drops."""
@@ -71,14 +80,14 @@ def robust_api_get(url, retries=3, backoff_factor=2):
                 return response
             elif response.status_code == 429:
                 sleep_time = backoff_factor * (attempt + 1)
-                print(f"Rate limited (429). Retrying in {sleep_time}s...")
+                logging.warning(f"Rate limited (429). Retrying in {sleep_time}s...")
                 time.sleep(sleep_time)
             else:
-                print(f"API Error {response.status_code}: {response.text}")
+                logging.error(f"API Error {response.status_code}: {response.text}")
                 return response
         except Exception as e:
             sleep_time = backoff_factor * (attempt + 1)
-            print(f"Request exception ({e}). Retrying in {sleep_time}s...")
+            logging.warning(f"Request exception ({e}). Retrying in {sleep_time}s...")
             time.sleep(sleep_time)
     return None
 
@@ -93,7 +102,7 @@ def fetch_upcoming_matches():
         
     matches = response.json().get("matches", [])
     filtered_matches = [m for m in matches if m.get("competition", {}).get("code") in LEAGUES]
-    print(f"Found {len(filtered_matches)} upcoming matches across monitored leagues.")
+    logging.info(f"Found {len(filtered_matches)} upcoming matches across monitored leagues.")
     return filtered_matches
 
 def fetch_league_standings(competition_code):
@@ -174,15 +183,14 @@ def analyze_and_predict(matches):
         exp_away_goals = round((away_gf + home_ga) / 2, 2)
         total_exp_goals = round(exp_home_goals + exp_away_goals, 2)
         
-        # Poisson Distribution Probabilities (%)
+        # Poisson Probabilities
         p_home, p_draw, p_away = calculate_poisson_probabilities(exp_home_goals, exp_away_goals)
         
-        # Requested Markets & Filters
+        # Markets & Custom Filters
         btts = "Yes" if (exp_home_goals >= 0.85 and exp_away_goals >= 0.85) else "No"
         over_2_5 = "Yes" if total_exp_goals >= 2.5 else "Under 2.5"
         
-        # Market 1: At least one team will score over 1.5 goals
-        team_over_15 = "None"
+        # Market 1: Team Over 1.5 Goals
         if exp_home_goals >= 1.5 and exp_away_goals >= 1.5:
             team_over_15 = "Both Teams (>1.5)"
         elif exp_home_goals >= 1.5:
@@ -192,29 +200,18 @@ def analyze_and_predict(matches):
         else:
             team_over_15 = "No Team (xG < 1.5)"
 
-        # Mathematical Confidence Tiering & Double Chance Under 4.5 Rules
+        # Confidence & Market 2: Double Chance Under 4.5 Goals Filter
         if p_home >= 55.0:
-            predicted_winner = home_team
-            confidence = "High"
-            base_dc = f"{home_team} or Draw (1X)"
+            predicted_winner, confidence, base_dc = home_team, "High", f"{home_team} or Draw (1X)"
         elif p_away >= 50.0:
-            predicted_winner = away_team
-            confidence = "High"
-            base_dc = f"{away_team} or Draw (X2)"
+            predicted_winner, confidence, base_dc = away_team, "High", f"{away_team} or Draw (X2)"
         elif 42.0 <= p_home < 55.0:
-            predicted_winner = home_team
-            confidence = "Medium"
-            base_dc = f"{home_team} or Draw (1X)"
+            predicted_winner, confidence, base_dc = home_team, "Medium", f"{home_team} or Draw (1X)"
         elif 40.0 <= p_away < 50.0:
-            predicted_winner = away_team
-            confidence = "Medium"
-            base_dc = f"{away_team} or Draw (X2)"
+            predicted_winner, confidence, base_dc = away_team, "Medium", f"{away_team} or Draw (X2)"
         else:
-            predicted_winner = "Draw / Closely Contested"
-            confidence = "Low"
-            base_dc = "Tight Match (12 or X)"
+            predicted_winner, confidence, base_dc = "Draw / Closely Contested", "Low", "Tight Match (12 or X)"
 
-        # Market 2: Double Chance under 4.5 goals filter rule
         if total_exp_goals < 4.5:
             double_chance_under_45 = f"{base_dc} & Under 4.5 Goals"
         else:
@@ -241,11 +238,9 @@ def analyze_and_predict(matches):
     return predictions
 
 def update_sqlite_tracker_and_evaluate(new_predictions):
-    """Updates and evaluates prediction statuses using SQLite relational database."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     
-    # Evaluate pending matches
     cursor.execute("SELECT id, date, match, prediction FROM predictions WHERE status = 'PENDING'")
     pending_rows = cursor.fetchall()
     
@@ -274,19 +269,12 @@ def update_sqlite_tracker_and_evaluate(new_predictions):
                             actual_str = f"{h_name} {h_goals}-{a_goals} {a_name}"
                             status = "WON" if prediction == actual_winner else "LOST"
                             
-                            cursor.execute("""
-                                UPDATE predictions 
-                                SET actual = ?, status = ? 
-                                WHERE id = ?
-                            """, (actual_str, status, row_id))
+                            cursor.execute("UPDATE predictions SET actual = ?, status = ? WHERE id = ?", (actual_str, status, row_id))
                             break
         conn.commit()
 
-    # Insert new predictions (avoiding duplicates)
     for p in new_predictions:
-        cursor.execute("""
-            SELECT id FROM predictions WHERE date = ? AND match = ?
-        """, (p["date"], p["match"]))
+        cursor.execute("SELECT id FROM predictions WHERE date = ? AND match = ?", (p["date"], p["match"]))
         if not cursor.fetchone():
             cursor.execute("""
                 INSERT INTO predictions (date, league, match, prediction, confidence, actual, status)
@@ -294,8 +282,6 @@ def update_sqlite_tracker_and_evaluate(new_predictions):
             """, (p["date"], p["league"], p["match"], p["prediction"], p["confidence"]))
             
     conn.commit()
-    
-    # Load entire tracker into pandas DataFrame for reporting & charting
     df = pd.read_sql_query("SELECT * FROM predictions", conn)
     conn.close()
     return df
@@ -350,11 +336,11 @@ def send_telegram_alert(message):
     try:
         requests.post(url, json=payload, timeout=5)
     except Exception as e:
-        print(f"Telegram error: {e}")
+        logging.error(f"Telegram error: {e}")
 
 def send_email(predictions, tracker_df):
     if not EMAIL_SENDER or not EMAIL_PASSWORD or not EMAIL_RECEIVER:
-        print("Email credentials missing.")
+        logging.error("Email credentials missing.")
         return
 
     completed = tracker_df[tracker_df["status"].isin(["WON", "LOST"])]
@@ -365,8 +351,8 @@ def send_email(predictions, tracker_df):
     tier_breakdown, league_breakdown = calculate_analytics_summaries(tracker_df)
     chart_path = generate_performance_chart(tracker_df)
 
-    html_content = "<h2>⚽ Institutional SQLite Football Report</h2>"
-    html_content += f"<p>Report generated on <b>{datetime.now().strftime('%Y-%m-%d')}</b> with SQLite persistence, Poisson models, and advanced market filters.</p>"
+    html_content = "<h2>⚽ Institutional Enterprise Football Report</h2>"
+    html_content += f"<p>Report generated on <b>{datetime.now().strftime('%Y-%m-%d')}</b> with SQLite persistence and advanced markets.</p>"
     
     html_content += f"<div style='background: #e9ecef; padding: 10px; border-radius: 5px; margin-bottom: 15px;'>"
     html_content += f"<b>Overall Accuracy:</b> {total_won}/{total_completed} ({overall_accuracy:.1f}%)<br><br>"
@@ -380,7 +366,7 @@ def send_email(predictions, tracker_df):
 
     if not predictions:
         html_content += "<p><b>No upcoming matches found in the next 4 days across monitored leagues.</b></p>"
-        telegram_msg = "⚽ <b>SQLite Football Report</b>\nNo upcoming matches found in the 4-day window."
+        telegram_msg = "⚽ <b>Enterprise Football Report</b>\nNo upcoming matches found in the 4-day window."
     else:
         html_content += "<h3>📅 Upcoming Fixtures, Double Chance (Under 4.5) & Team Over 1.5 Markets</h3>"
         html_content += "<table border='1' cellspacing='0' cellpadding='5' style='border-collapse: collapse; width: 100%; font-family: sans-serif; font-size: 11px;'>"
@@ -404,12 +390,12 @@ def send_email(predictions, tracker_df):
         html_content += "<h3 style='color: #1971c2;'>⚡ Team Over 1.5 Targets</h3><ul>" + ("".join([f"<li>{x}</li>" for x in team_over15_list]) if team_over15_list else "<li>None today.</li>") + "</ul>"
         html_content += "<h3>🛡️ Double Chance & Under 4.5 Goals Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in dc_under45_list]) if dc_under45_list else "<li>None today.</li>") + "</ul>"
 
-        telegram_msg = f"⚽ <b>SQLite Football Report</b>\n📊 <b>Accuracy:</b> {overall_accuracy:.1f}%\n"
+        telegram_msg = f"⚽ <b>Enterprise Football Report</b>\n📊 <b>Accuracy:</b> {overall_accuracy:.1f}%\n"
         if high_list:
             telegram_msg += f"\n🔥 <b>High Conf Picks:</b>\n" + "\n".join([f"• {item}" for item in high_list[:3]])
 
     msg = MIMEMultipart("related")
-    msg["Subject"] = f"Institutional SQLite Football Analytics - {datetime.now().strftime('%Y-%m-%d')}"
+    msg["Subject"] = f"Institutional Enterprise Football Analytics - {datetime.now().strftime('%Y-%m-%d')}"
     msg["From"] = EMAIL_SENDER
     msg["To"] = EMAIL_RECEIVER
     
@@ -428,17 +414,17 @@ def send_email(predictions, tracker_df):
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
             server.sendmail(EMAIL_SENDER, EMAIL_RECEIVER, msg.as_string())
-        print("Institutional SQLite email report sent successfully!")
+        logging.info("Institutional email report sent successfully!")
     except Exception as e:
-        print(f"Failed to send email: {e}")
+        logging.error(f"Failed to send email: {e}")
 
     send_telegram_alert(telegram_msg)
 
 if __name__ == "__main__":
-    print("Initializing institutional SQLite database and running pipeline...")
+    logging.info("Starting institutional quantitative football analytics pipeline...")
     init_db()
     matches = fetch_upcoming_matches()
     predictions = analyze_and_predict(matches)
     tracker_df = update_sqlite_tracker_and_evaluate(predictions)
     send_email(predictions, tracker_df)
-    print("Execution complete.")
+    logging.info("Execution complete.")
