@@ -1,5 +1,6 @@
 import os
 import time
+import math
 import requests
 from datetime import datetime, timedelta
 import pandas as pd
@@ -104,30 +105,16 @@ def parse_form_score(form_str):
         elif char == 'L': score -= 1
     return score
 
-def calculate_kelly_stake(confidence, bankroll=100.0):
-    """Calculates suggested bankroll stake using fractional Kelly principles."""
-    if confidence == "High":
-        return round(bankroll * 0.02, 2) # 2% stake
-    elif confidence == "Medium":
-        return round(bankroll * 0.01, 2) # 1% stake
-    else:
-        return round(bankroll * 0.005, 2) # 0.5% stake for tight matches
-import math
-
 def calculate_poisson_probabilities(exp_home, exp_away, max_goals=6):
-    """Calculates exact match outcome probabilities using Poisson distribution."""
+    """Calculates exact match outcome percentages using Poisson distribution."""
     home_win_prob = 0.0
     draw_prob = 0.0
     away_win_prob = 0.0
     
-    # Calculate probability matrix for scorelines up to max_goals (e.g., 6x6)
-    for i in range(max_goals + 1): # Home goals
-        for j in range(max_goals + 1): # Away goals
-            # Poisson probability mass function for home and away teams
+    for i in range(max_goals + 1):
+        for j in range(max_goals + 1):
             p_home = (math.pow(exp_home, i) * math.exp(-exp_home)) / math.factorial(i)
             p_away = (math.pow(exp_away, j) * math.exp(-exp_away)) / math.factorial(j)
-            
-            # Joint probability of this exact scoreline
             scoreline_prob = p_home * p_away
             
             if i > j:
@@ -138,6 +125,16 @@ def calculate_poisson_probabilities(exp_home, exp_away, max_goals=6):
                 away_win_prob += scoreline_prob
                 
     return round(home_win_prob * 100, 1), round(draw_prob * 100, 1), round(away_win_prob * 100, 1)
+
+def calculate_kelly_stake(confidence, bankroll=100.0):
+    """Calculates suggested bankroll stake using fractional Kelly principles."""
+    if confidence == "High":
+        return round(bankroll * 0.02, 2)
+    elif confidence == "Medium":
+        return round(bankroll * 0.01, 2)
+    else:
+        return round(bankroll * 0.005, 2)
+
 def analyze_and_predict(matches):
     predictions = []
     
@@ -162,18 +159,10 @@ def analyze_and_predict(matches):
         home_stats = standings.get(home_id, {})
         away_stats = standings.get(away_id, {})
         
-        home_points = home_stats.get("points", 0)
-        away_points = away_stats.get("points", 0)
-        home_position = home_stats.get("position", 10)
-        away_position = away_stats.get("position", 10)
-        
-        home_form_pts = parse_form_score(home_stats.get("form", ""))
-        away_form_pts = parse_form_score(away_stats.get("form", ""))
-        
-        # Expected Goals (xG) Calculation
         home_played = max(home_stats.get("playedGames", 1), 1)
         away_played = max(away_stats.get("playedGames", 1), 1)
         
+        # Expected Goals (xG) Calculation
         home_gf = home_stats.get("goalsFor", 0) / home_played
         home_ga = home_stats.get("goalsAgainst", 0) / home_played
         away_gf = away_stats.get("goalsFor", 0) / away_played
@@ -183,29 +172,35 @@ def analyze_and_predict(matches):
         exp_away_goals = round((away_gf + home_ga) / 2, 2)
         total_exp_goals = round(exp_home_goals + exp_away_goals, 2)
         
+        # Poisson Distribution Probabilities (%)
+        p_home, p_draw, p_away = calculate_poisson_probabilities(exp_home_goals, exp_away_goals)
+        
+        # Markets: BTTS & Over/Under
         btts = "Yes" if (exp_home_goals >= 0.85 and exp_away_goals >= 0.85) else "No"
         over_2_5 = "Yes" if total_exp_goals >= 2.5 else "Under 2.5"
         over_1_5 = "Yes" if total_exp_goals >= 1.6 else "Risky / Under"
         
-        h2h = fetch_h2h_data(match_id)
-        home_h2h_wins = h2h.get("homeTeam", {}).get("wins", 0) if h2h else 0
-        away_h2h_wins = h2h.get("awayTeam", {}).get("wins", 0) if h2h else 0
-        
-        home_score = (20 - home_position) * 1.2 + (home_points * 0.3) + (home_form_pts * 0.8) + (home_h2h_wins * 0.5) + 3.0
-        away_score = (20 - away_position) * 1.2 + (away_points * 0.3) + (away_form_pts * 0.8) + (away_h2h_wins * 0.5)
-        
-        score_diff = home_score - away_score
-        
-        if score_diff > 4.5:
-            predicted_winner, confidence, double_chance = home_team, "High", f"{home_team} or Draw (1X)"
-        elif score_diff < -4.5:
-            predicted_winner, confidence, double_chance = away_team, "High", f"{away_team} or Draw (X2)"
-        elif 2.0 <= score_diff <= 4.5:
-            predicted_winner, home_team, confidence, double_chance = home_team, home_team, "Medium", f"{home_team} or Draw (1X)"
-        elif -4.5 <= score_diff <= -2.0:
-            predicted_winner, confidence, double_chance = away_team, "Medium", f"{away_team} or Draw (X2)"
+        # Mathematical Confidence Tiering based on Poisson Probabilities
+        if p_home >= 55.0:
+            predicted_winner = home_team
+            confidence = "High"
+            double_chance = f"{home_team} or Draw (1X)"
+        elif p_away >= 50.0:
+            predicted_winner = away_team
+            confidence = "High"
+            double_chance = f"{away_team} or Draw (X2)"
+        elif 42.0 <= p_home < 55.0:
+            predicted_winner = home_team
+            confidence = "Medium"
+            double_chance = f"{home_team} or Draw (1X)"
+        elif 40.0 <= p_away < 50.0:
+            predicted_winner = away_team
+            confidence = "Medium"
+            double_chance = f"{away_team} or Draw (X2)"
         else:
-            predicted_winner, confidence, double_chance = "Draw / Closely Contested", "Low", "Tight Match / Draw (12 or X)"
+            predicted_winner = "Draw / Closely Contested"
+            confidence = "Low"
+            double_chance = "Tight Match / Draw (12 or X)"
             
         recommended_stake = calculate_kelly_stake(confidence)
             
@@ -221,6 +216,7 @@ def analyze_and_predict(matches):
             "btts": btts,
             "over_2_5": over_2_5,
             "over_1_5": over_1_5,
+            "poisson_odds": f"H:{p_home}% | D:{p_draw}% | A:{p_away}%",
             "exp_goals": f"{exp_home_goals} - {exp_away_goals} (Tot: {total_exp_goals})"
         })
         
@@ -282,7 +278,6 @@ def update_tracker_and_evaluate(new_predictions):
     return df
 
 def generate_performance_chart(tracker_df):
-    """Generates an equity curve performance chart and saves it as an image."""
     completed = tracker_df[tracker_df["Status"].isin(["WON", "LOST"])].copy()
     if len(completed) < 2:
         return None
@@ -292,7 +287,7 @@ def generate_performance_chart(tracker_df):
     
     plt.figure(figsize=(8, 4))
     plt.plot(range(len(completed)), completed['Cumulative'], marker='o', color='#2b8a3e', linewidth=2, markersize=5)
-    plt.title("Model Cumulative Performance Equity Curve", fontsize=12, fontweight='bold', color='#333333')
+    plt.title("Poisson Model Cumulative Performance Equity Curve", fontsize=12, fontweight='bold', color='#333333')
     plt.xlabel("Completed Matches", fontsize=10)
     plt.ylabel("Net Wins / Units", fontsize=10)
     plt.grid(True, linestyle='--', alpha=0.6)
@@ -307,7 +302,6 @@ def calculate_analytics_summaries(tracker_df):
     if completed.empty:
         return "No completed matches evaluated yet.", "No completed matches evaluated yet."
     
-    # Tier Breakdown
     tier_summary = ""
     for tier in ["High", "Medium", "Low"]:
         tier_df = completed[completed["Confidence"] == tier]
@@ -316,7 +310,6 @@ def calculate_analytics_summaries(tracker_df):
         rate = (won / total * 100) if total > 0 else 0.0
         tier_summary += f"• <b>{tier} Confidence:</b> {won}/{total} ({rate:.1f}%)\n"
         
-    # League Breakdown
     league_summary = ""
     for league, group in completed.groupby("League"):
         total = len(group)
@@ -349,8 +342,8 @@ def send_email(predictions, tracker_df):
     tier_breakdown, league_breakdown = calculate_analytics_summaries(tracker_df)
     chart_path = generate_performance_chart(tracker_df)
 
-    html_content = "<h2>⚽ Institutional Pro Football Analytics Report</h2>"
-    html_content += f"<p>Report generated on <b>{datetime.now().strftime('%Y-%m-%d')}</b> with automated risk management and performance charts.</p>"
+    html_content = "<h2>⚽ Poisson-Powered Institutional Football Report</h2>"
+    html_content += f"<p>Report generated on <b>{datetime.now().strftime('%Y-%m-%d')}</b> using Poisson probability simulations.</p>"
     
     html_content += f"<div style='background: #e9ecef; padding: 10px; border-radius: 5px; margin-bottom: 15px;'>"
     html_content += f"<b>Overall Accuracy:</b> {total_won}/{total_completed} ({overall_accuracy:.1f}%)<br><br>"
@@ -364,35 +357,34 @@ def send_email(predictions, tracker_df):
 
     if not predictions:
         html_content += "<p><b>No upcoming matches found in the next 4 days across monitored leagues.</b></p>"
-        telegram_msg = "⚽ <b>Football Predictions</b>\nNo upcoming matches found in the 4-day window."
+        telegram_msg = "⚽ <b>Poisson Football Predictions</b>\nNo upcoming matches found in the 4-day window."
     else:
-        html_content += "<h3>📅 Full Upcoming Fixtures & Staking Table</h3>"
+        html_content += "<h3>📅 Full Upcoming Fixtures & Poisson Probabilities Table</h3>"
         html_content += "<table border='1' cellspacing='0' cellpadding='5' style='border-collapse: collapse; width: 100%; font-family: sans-serif; font-size: 11px;'>"
-        html_content += "<tr style='background-color: #f8f9fa;'><th>Kickoff</th><th>League</th><th>Matchup</th><th>Pick</th><th>Conf</th><th>Stake</th><th>BTTS</th><th>O 2.5</th></tr>"
+        html_content += "<tr style='background-color: #f8f9fa;'><th>Kickoff</th><th>League</th><th>Matchup</th><th>Poisson Probabilities</th><th>Pick</th><th>Stake</th><th>BTTS</th><th>O 2.5</th></tr>"
         
         high_list, btts_list, over25_list = [], [], []
 
         for p in predictions:
-            html_content += f"<tr><td>{p['kickoff']}</td><td>{p['league']}</td><td>{p['match']}</td><td><b>{p['prediction']}</b></td><td>{p['confidence']}</td><td>{p['stake']}</td><td>{p['btts']}</td><td>{p['over_2_5']}</td></tr>"
+            html_content += f"<tr><td>{p['kickoff']}</td><td>{p['league']}</td><td>{p['match']}</td><td>{p['poisson_odds']}</td><td><b>{p['prediction']}</b></td><td>{p['stake']}</td><td>{p['btts']}</td><td>{p['over_2_5']}</td></tr>"
             
-            item_desc = f"<b>{p['match']}</b> ({p['league']}) ➔ Stake: <b>{p['stake']}</b> | Pick: <b>{p['prediction']}</b> | xG: {p['exp_goals']}"
+            item_desc = f"<b>{p['match']}</b> ({p['league']}) ➔ Odds: [{p['poisson_odds']}] | Pick: <b>{p['prediction']}</b>"
             if p['confidence'] == 'High': high_list.append(item_desc)
             if p['btts'] == 'Yes': btts_list.append(f"<b>{p['match']}</b> ({p['kickoff']})")
             if p['over_2_5'] == 'Yes': over25_list.append(f"<b>{p['match']}</b> ({p['kickoff']})")
 
         html_content += "</table>"
 
-        html_content += "<h3 style='color: #2b8a3e;'>🔥 High Probability Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in high_list]) if high_list else "<li>None today.</li>") + "</ul>"
+        html_content += "<h3 style='color: #2b8a3e;'>🔥 High Probability Poisson Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in high_list]) if high_list else "<li>None today.</li>") + "</ul>"
         html_content += "<h3 style='color: #1971c2;'>⚡ Both Teams to Score (BTTS) Targets</h3><ul>" + ("".join([f"<li>{x}</li>" for x in btts_list]) if btts_list else "<li>None today.</li>") + "</ul>"
         html_content += "<h3>⚽ Over 2.5 Goals Targets</h3><ul>" + ("".join([f"<li>{x}</li>" for x in over25_list]) if over25_list else "<li>None today.</li>") + "</ul>"
 
-        telegram_msg = f"⚽ <b>Pro Football Report</b>\n📊 <b>Accuracy:</b> {overall_accuracy:.1f}%\n"
+        telegram_msg = f"⚽ <b>Poisson Football Report</b>\n📊 <b>Accuracy:</b> {overall_accuracy:.1f}%\n"
         if high_list:
-            telegram_msg += f"\n🔥 <b>High Conf Picks & Stakes:</b>\n" + "\n".join([f"• {item}" for item in high_list[:4]])
+            telegram_msg += f"\n🔥 <b>High Conf Poisson Picks:</b>\n" + "\n".join([f"• {item}" for item in high_list[:4]])
 
-    # Construct Multipart Email with Embedded Image
     msg = MIMEMultipart("related")
-    msg["Subject"] = f"Institutional Football Analytics & Equity Curve - {datetime.now().strftime('%Y-%m-%d')}"
+    msg["Subject"] = f"Poisson Football Analytics & Equity Curve - {datetime.now().strftime('%Y-%m-%d')}"
     msg["From"] = EMAIL_SENDER
     msg["To"] = EMAIL_RECEIVER
     
@@ -400,7 +392,6 @@ def send_email(predictions, tracker_df):
     msg.attach(msg_alternative)
     msg_alternative.attach(MIMEText(html_content, "html"))
 
-    # Attach chart image inline if available
     if chart_path and os.path.exists(chart_path):
         with open(chart_path, "rb") as img_file:
             msg_image = MIMEImage(img_file.read())
@@ -412,14 +403,14 @@ def send_email(predictions, tracker_df):
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
             server.sendmail(EMAIL_SENDER, EMAIL_RECEIVER, msg.as_string())
-        print("Institutional email report with embedded chart sent successfully!")
+        print("Poisson analytics email sent successfully!")
     except Exception as e:
         print(f"Failed to send email: {e}")
 
     send_telegram_alert(telegram_msg)
 
 if __name__ == "__main__":
-    print("Running institutional quantitative football analytics pipeline...")
+    print("Running Poisson-powered quantitative football analytics pipeline...")
     matches = fetch_upcoming_matches()
     predictions = analyze_and_predict(matches)
     tracker_df = update_tracker_and_evaluate(predictions)
