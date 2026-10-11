@@ -92,6 +92,7 @@ def robust_api_get(url, retries=3, backoff_factor=2):
     return None
 
 def fetch_upcoming_matches():
+    """Fetches upcoming matches across all 12 free leagues for the next 4 days."""
     today = datetime.now().strftime("%Y-%m-%d")
     future_date = (datetime.now() + timedelta(days=4)).strftime("%Y-%m-%d")
     url = f"{BASE_URL}/matches?dateFrom={today}&dateTo={future_date}"
@@ -238,6 +239,7 @@ def analyze_and_predict(matches):
     return predictions
 
 def update_sqlite_tracker_and_evaluate(new_predictions):
+    """Evaluates pending outcomes and stores new predictions in SQLite database."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     
@@ -287,6 +289,7 @@ def update_sqlite_tracker_and_evaluate(new_predictions):
     return df
 
 def generate_performance_chart(tracker_df):
+    """Generates equity curve chart if enough completed matches exist."""
     completed = tracker_df[tracker_df["status"].isin(["WON", "LOST"])].copy()
     if len(completed) < 2:
         return None
