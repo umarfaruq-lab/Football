@@ -1,28 +1,28 @@
 Date,League,Match,Prediction,Actual,Status,Confidence
-2026-10-10,Premier League (England),Arsenal FC vs Leeds United FC,Arsenal FC,Pending,PENDING,High
+2026-10-10,Premier League (England),Arsenal FC vs Leeds United FC,Arsenal FC,Arsenal FC 2-1 Leeds United FC,WON,High
 2026-10-10,La Liga (Spain),Rayo Vallecano de Madrid vs Athletic Club,Draw / Closely Contested,Pending,PENDING,Low
-2026-10-10,Serie A (Italy),Genoa CFC vs ACF Fiorentina,Genoa CFC,Pending,PENDING,High
-2026-10-10,Bundesliga (Germany),1. FSV Mainz 05 vs Bayer 04 Leverkusen,Bayer 04 Leverkusen,Pending,PENDING,Medium
-2026-10-10,Bundesliga (Germany),TSG 1899 Hoffenheim vs Hamburger SV,Hamburger SV,Pending,PENDING,High
-2026-10-10,Bundesliga (Germany),1. FC Union Berlin vs SV 07 Elversberg,1. FC Union Berlin,Pending,PENDING,Medium
-2026-10-10,Bundesliga (Germany),SC Paderborn 07 vs VfB Stuttgart,SC Paderborn 07,Pending,PENDING,Medium
-2026-10-10,Bundesliga (Germany),FC Augsburg vs FC Bayern München,FC Augsburg,Pending,PENDING,Medium
-2026-10-10,Premier League (England),Ipswich Town FC vs Fulham FC,Ipswich Town FC,Pending,PENDING,Medium
-2026-10-10,Premier League (England),Chelsea FC vs AFC Bournemouth,Chelsea FC,Pending,PENDING,Medium
-2026-10-10,Premier League (England),Aston Villa FC vs Brentford FC,Aston Villa FC,Pending,PENDING,Medium
-2026-10-10,Premier League (England),Sunderland AFC vs Brighton & Hove Albion FC,Sunderland AFC,Pending,PENDING,Medium
-2026-10-10,La Liga (Spain),Deportivo Alavés vs Club Atlético de Madrid,Deportivo Alavés,Pending,PENDING,Medium
-2026-10-10,Ligue 1 (France),Lille OSC vs Le Havre AC,Lille OSC,Pending,PENDING,Medium
-2026-10-10,Serie A (Italy),FC Internazionale Milano vs Parma Calcio 1913,FC Internazionale Milano,Pending,PENDING,Medium
-2026-10-10,La Liga (Spain),FC Barcelona vs Getafe CF,FC Barcelona,Pending,PENDING,Medium
-2026-10-10,Premier League (England),Manchester United FC vs Tottenham Hotspur FC,Manchester United FC,Pending,PENDING,Medium
-2026-10-10,Bundesliga (Germany),RB Leipzig vs Eintracht Frankfurt,RB Leipzig,Pending,PENDING,Medium
-2026-10-10,Ligue 1 (France),AS Monaco FC vs Toulouse FC,AS Monaco FC,Pending,PENDING,Medium
-2026-10-10,Ligue 1 (France),FC Lorient vs Paris FC,FC Lorient,Pending,PENDING,Medium
-2026-10-10,Ligue 1 (France),Stade Brestois 29 vs Angers SCO,Stade Brestois 29,Pending,PENDING,Medium
-2026-10-10,Serie A (Italy),SSC Napoli vs Frosinone Calcio,SSC Napoli,Pending,PENDING,Medium
-2026-10-10,Ligue 1 (France),Paris Saint-Germain FC vs Le Mans FC,Paris Saint-Germain FC,Pending,PENDING,Medium
-2026-10-10,La Liga (Spain),Real Madrid CF vs Villarreal CF,Real Madrid CF,Pending,PENDING,Medium
+2026-10-10,Serie A (Italy),Genoa CFC vs ACF Fiorentina,Genoa CFC,Genoa CFC 2-1 ACF Fiorentina,WON,High
+2026-10-10,Bundesliga (Germany),1. FSV Mainz 05 vs Bayer 04 Leverkusen,Bayer 04 Leverkusen,1. FSV Mainz 05 3-4 Bayer 04 Leverkusen,WON,Medium
+2026-10-10,Bundesliga (Germany),TSG 1899 Hoffenheim vs Hamburger SV,Hamburger SV,TSG 1899 Hoffenheim 2-3 Hamburger SV,WON,High
+2026-10-10,Bundesliga (Germany),1. FC Union Berlin vs SV 07 Elversberg,1. FC Union Berlin,1. FC Union Berlin 1-0 SV 07 Elversberg,WON,Medium
+2026-10-10,Bundesliga (Germany),SC Paderborn 07 vs VfB Stuttgart,SC Paderborn 07,SC Paderborn 07 0-2 VfB Stuttgart,LOST,Medium
+2026-10-10,Bundesliga (Germany),FC Augsburg vs FC Bayern München,FC Augsburg,FC Augsburg 2-2 FC Bayern München,LOST,Medium
+2026-10-10,Premier League (England),Ipswich Town FC vs Fulham FC,Ipswich Town FC,Ipswich Town FC 2-1 Fulham FC,WON,Medium
+2026-10-10,Premier League (England),Chelsea FC vs AFC Bournemouth,Chelsea FC,Chelsea FC 5-1 AFC Bournemouth,WON,Medium
+2026-10-10,Premier League (England),Aston Villa FC vs Brentford FC,Aston Villa FC,Aston Villa FC 2-2 Brentford FC,LOST,Medium
+2026-10-10,Premier League (England),Sunderland AFC vs Brighton & Hove Albion FC,Sunderland AFC,Sunderland AFC 0-2 Brighton & Hove Albion FC,LOST,Medium
+2026-10-10,La Liga (Spain),Deportivo Alavés vs Club Atlético de Madrid,Deportivo Alavés,Deportivo Alavés 1-2 Club Atlético de Madrid,LOST,Medium
+2026-10-10,Ligue 1 (France),Lille OSC vs Le Havre AC,Lille OSC,Lille OSC 1-0 Le Havre AC,WON,Medium
+2026-10-10,Serie A (Italy),FC Internazionale Milano vs Parma Calcio 1913,FC Internazionale Milano,FC Internazionale Milano 3-0 Parma Calcio 1913,WON,Medium
+2026-10-10,La Liga (Spain),FC Barcelona vs Getafe CF,FC Barcelona,FC Barcelona 3-0 Getafe CF,WON,Medium
+2026-10-10,Premier League (England),Manchester United FC vs Tottenham Hotspur FC,Manchester United FC,Manchester United FC 1-1 Tottenham Hotspur FC,LOST,Medium
+2026-10-10,Bundesliga (Germany),RB Leipzig vs Eintracht Frankfurt,RB Leipzig,RB Leipzig 6-0 Eintracht Frankfurt,WON,Medium
+2026-10-10,Ligue 1 (France),AS Monaco FC vs Toulouse FC,AS Monaco FC,AS Monaco FC 2-2 Toulouse FC,LOST,Medium
+2026-10-10,Ligue 1 (France),FC Lorient vs Paris FC,FC Lorient,FC Lorient 1-0 Paris FC,WON,Medium
+2026-10-10,Ligue 1 (France),Stade Brestois 29 vs Angers SCO,Stade Brestois 29,Stade Brestois 29 5-1 Angers SCO,WON,Medium
+2026-10-10,Serie A (Italy),SSC Napoli vs Frosinone Calcio,SSC Napoli,SSC Napoli 3-0 Frosinone Calcio,WON,Medium
+2026-10-10,Ligue 1 (France),Paris Saint-Germain FC vs Le Mans FC,Paris Saint-Germain FC,Paris Saint-Germain FC 3-1 Le Mans FC,WON,Medium
+2026-10-10,La Liga (Spain),Real Madrid CF vs Villarreal CF,Real Madrid CF,Real Madrid CF 1-0 Villarreal CF,WON,Medium
 2026-10-11,Serie A (Italy),Como 1907 vs AS Roma,Como 1907,Pending,PENDING,Medium
 2026-10-11,La Liga (Spain),Elche CF vs RC Celta de Vigo,Elche CF,Pending,PENDING,Medium
 2026-10-11,Serie A (Italy),US Lecce vs Bologna FC 1909,US Lecce,Pending,PENDING,Medium
@@ -53,7 +53,7 @@ Date,League,Match,Prediction,Actual,Status,Confidence
 2026-10-13,UEFA Champions League (Europe),Club Atlético de Madrid vs Manchester United FC,Club Atlético de Madrid,Pending,PENDING,Medium
 2026-10-13,UEFA Champions League (Europe),Viking FK vs FC Bayern München,Viking FK,Pending,PENDING,Medium
 2026-10-13,UEFA Champions League (Europe),FC Internazionale Milano vs Club Brugge KV,FC Internazionale Milano,Pending,PENDING,Medium
-2026-10-11,Campeonato Brasileiro Série A (Brazil),São Paulo FC vs EC Vitória,São Paulo FC,Pending,PENDING,High
+2026-10-11,Campeonato Brasileiro Série A (Brazil),São Paulo FC vs EC Vitória,São Paulo FC,São Paulo FC 2-1 EC Vitória,WON,High
 2026-10-11,Eredivisie (Netherlands),FC Utrecht vs Willem II Tilburg,FC Utrecht,Pending,PENDING,High
 2026-10-11,Championship (England),Southampton FC vs Portsmouth FC,Southampton FC,Pending,PENDING,High
 2026-10-11,Eredivisie (Netherlands),PEC Zwolle vs SC Cambuur-Leeuwarden,PEC Zwolle,Pending,PENDING,Medium
