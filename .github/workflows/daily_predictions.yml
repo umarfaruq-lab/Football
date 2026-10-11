@@ -2,8 +2,8 @@ name: Enterprise Football Pipeline
 
 on:
   schedule:
-    - cron: '0 7 * * *' # Runs every day at 7:00 AM UTC (7:00 AM Sierra Leone Time)
-  workflow_dispatch: # Allows manual trigger anytime from the Actions tab
+    - cron: '0 7 * * *' # Runs daily at 7:00 AM UTC (7:00 AM Sierra Leone Local Time)
+  workflow_dispatch: # Allows manual trigger from the GitHub Actions tab
 
 jobs:
   run-analytics:
@@ -39,10 +39,8 @@ jobs:
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "actions@github.com"
           
-          # Safely add database if it exists
+          # Safely commit SQLite DB and chart image if they exist
           if [ -f tracker.db ]; then git add tracker.db; fi
-          
-          # Safely add chart image only if it was generated
           if [ -f performance_chart.png ]; then git add performance_chart.png; fi
           
           git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update enterprise SQLite tracker and equity chart [skip ci]" && git push)
