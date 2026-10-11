@@ -1,6 +1,7 @@
 import os
 import time
 import math
+import sqlite3
 import requests
 from datetime import datetime, timedelta
 import pandas as pd
@@ -39,8 +40,27 @@ LEAGUES = {
     "WC": "FIFA World Cup (World)"
 }
 
-TRACKER_FILE = "tracker.csv"
+DB_FILE = "tracker.db"
 CHART_FILE = "performance_chart.png"
+
+def init_db():
+    """Initializes the institutional SQLite database for robust historical tracking."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS predictions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT,
+            league TEXT,
+            match TEXT,
+            prediction TEXT,
+            confidence TEXT,
+            actual TEXT,
+            status TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
 def robust_api_get(url, retries=3, backoff_factor=2):
     """Robust API request wrapper with exponential backoff for rate limits and connection drops."""
@@ -86,24 +106,6 @@ def fetch_league_standings(competition_code):
         if table.get("type") == "TOTAL":
             return {item["team"]["id"]: item for item in table.get("table", [])}
     return {}
-
-def fetch_h2h_data(match_id):
-    url = f"{BASE_URL}/matches/{match_id}/head2head"
-    response = robust_api_get(url)
-    if not response or response.status_code != 200:
-        return None
-    return response.json().get("aggregates", {})
-
-def parse_form_score(form_str):
-    if not form_str:
-        return 0
-    score = 0
-    cleaned = form_str.replace(",", "")
-    for char in cleaned:
-        if char == 'W': score += 3
-        elif char == 'D': score += 1
-        elif char == 'L': score -= 1
-    return score
 
 def calculate_poisson_probabilities(exp_home, exp_away, max_goals=6):
     """Calculates exact match outcome percentages using Poisson distribution."""
@@ -175,32 +177,48 @@ def analyze_and_predict(matches):
         # Poisson Distribution Probabilities (%)
         p_home, p_draw, p_away = calculate_poisson_probabilities(exp_home_goals, exp_away_goals)
         
-        # Markets: BTTS & Over/Under
+        # Requested Markets & Filters
         btts = "Yes" if (exp_home_goals >= 0.85 and exp_away_goals >= 0.85) else "No"
         over_2_5 = "Yes" if total_exp_goals >= 2.5 else "Under 2.5"
-        over_1_5 = "Yes" if total_exp_goals >= 1.6 else "Risky / Under"
         
-        # Mathematical Confidence Tiering based on Poisson Probabilities
+        # Market 1: At least one team will score over 1.5 goals
+        team_over_15 = "None"
+        if exp_home_goals >= 1.5 and exp_away_goals >= 1.5:
+            team_over_15 = "Both Teams (>1.5)"
+        elif exp_home_goals >= 1.5:
+            team_over_15 = f"{home_team} (>1.5)"
+        elif exp_away_goals >= 1.5:
+            team_over_15 = f"{away_team} (>1.5)"
+        else:
+            team_over_15 = "No Team (xG < 1.5)"
+
+        # Mathematical Confidence Tiering & Double Chance Under 4.5 Rules
         if p_home >= 55.0:
             predicted_winner = home_team
             confidence = "High"
-            double_chance = f"{home_team} or Draw (1X)"
+            base_dc = f"{home_team} or Draw (1X)"
         elif p_away >= 50.0:
             predicted_winner = away_team
             confidence = "High"
-            double_chance = f"{away_team} or Draw (X2)"
+            base_dc = f"{away_team} or Draw (X2)"
         elif 42.0 <= p_home < 55.0:
             predicted_winner = home_team
             confidence = "Medium"
-            double_chance = f"{home_team} or Draw (1X)"
+            base_dc = f"{home_team} or Draw (1X)"
         elif 40.0 <= p_away < 50.0:
             predicted_winner = away_team
             confidence = "Medium"
-            double_chance = f"{away_team} or Draw (X2)"
+            base_dc = f"{away_team} or Draw (X2)"
         else:
             predicted_winner = "Draw / Closely Contested"
             confidence = "Low"
-            double_chance = "Tight Match / Draw (12 or X)"
+            base_dc = "Tight Match (12 or X)"
+
+        # Market 2: Double Chance under 4.5 goals filter rule
+        if total_exp_goals < 4.5:
+            double_chance_under_45 = f"{base_dc} & Under 4.5 Goals"
+        else:
+            double_chance_under_45 = f"{base_dc} (High Goal Risk >= 4.5)"
             
         recommended_stake = calculate_kelly_stake(confidence)
             
@@ -212,33 +230,34 @@ def analyze_and_predict(matches):
             "prediction": predicted_winner,
             "confidence": confidence,
             "stake": f"${recommended_stake}",
-            "double_chance": double_chance,
+            "dc_under_45": double_chance_under_45,
+            "team_over_15": team_over_15,
             "btts": btts,
             "over_2_5": over_2_5,
-            "over_1_5": over_1_5,
             "poisson_odds": f"H:{p_home}% | D:{p_draw}% | A:{p_away}%",
             "exp_goals": f"{exp_home_goals} - {exp_away_goals} (Tot: {total_exp_goals})"
         })
         
     return predictions
 
-def update_tracker_and_evaluate(new_predictions):
-    if os.path.exists(TRACKER_FILE):
-        df = pd.read_csv(TRACKER_FILE)
-    else:
-        df = pd.DataFrame(columns=["Date", "League", "Match", "Prediction", "Confidence", "Actual", "Status"])
+def update_sqlite_tracker_and_evaluate(new_predictions):
+    """Updates and evaluates prediction statuses using SQLite relational database."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
     
-    pending_rows = df[df["Status"] == "PENDING"]
-    if not pending_rows.empty:
-        oldest_date = pending_rows["Date"].min()
+    # Evaluate pending matches
+    cursor.execute("SELECT id, date, match, prediction FROM predictions WHERE status = 'PENDING'")
+    pending_rows = cursor.fetchall()
+    
+    if pending_rows:
+        oldest_date = min([row[1] for row in pending_rows])
         today_str = datetime.now().strftime("%Y-%m-%d")
         url = f"{BASE_URL}/matches?dateFrom={oldest_date}&dateTo={today_str}"
         response = robust_api_get(url)
         
         if response and response.status_code == 200:
             finished_matches = response.json().get("matches", [])
-            for idx, row in pending_rows.iterrows():
-                match_desc = row["Match"]
+            for row_id, match_date, match_desc, prediction in pending_rows:
                 for m in finished_matches:
                     if m.get("status") == "FINISHED":
                         h_name = m["homeTeam"]["name"]
@@ -252,42 +271,46 @@ def update_tracker_and_evaluate(new_predictions):
                             elif a_goals > h_goals: actual_winner = a_name
                             else: actual_winner = "Draw / Closely Contested"
                                 
-                            df.loc[idx, "Actual"] = f"{h_name} {h_goals}-{a_goals} {a_name}"
-                            df.loc[idx, "Status"] = "WON" if row["Prediction"] == actual_winner else "LOST"
+                            actual_str = f"{h_name} {h_goals}-{a_goals} {a_name}"
+                            status = "WON" if prediction == actual_winner else "LOST"
+                            
+                            cursor.execute("""
+                                UPDATE predictions 
+                                SET actual = ?, status = ? 
+                                WHERE id = ?
+                            """, (actual_str, status, row_id))
                             break
+        conn.commit()
 
-    new_rows = []
+    # Insert new predictions (avoiding duplicates)
     for p in new_predictions:
-        existing = df[(df["Date"] == p["date"]) & (df["Match"] == p["match"])]
-        if existing.empty:
-            new_rows.append({
-                "Date": p["date"],
-                "League": p["league"],
-                "Match": p["match"],
-                "Prediction": p["prediction"],
-                "Confidence": p["confidence"],
-                "Actual": "Pending",
-                "Status": "PENDING"
-            })
+        cursor.execute("""
+            SELECT id FROM predictions WHERE date = ? AND match = ?
+        """, (p["date"], p["match"]))
+        if not cursor.fetchone():
+            cursor.execute("""
+                INSERT INTO predictions (date, league, match, prediction, confidence, actual, status)
+                VALUES (?, ?, ?, ?, ?, 'Pending', 'PENDING')
+            """, (p["date"], p["league"], p["match"], p["prediction"], p["confidence"]))
             
-    if new_rows:
-        new_df = pd.DataFrame(new_rows)
-        df = pd.concat([df, new_df], ignore_index=True)
-        
-    df.to_csv(TRACKER_FILE, index=False)
+    conn.commit()
+    
+    # Load entire tracker into pandas DataFrame for reporting & charting
+    df = pd.read_sql_query("SELECT * FROM predictions", conn)
+    conn.close()
     return df
 
 def generate_performance_chart(tracker_df):
-    completed = tracker_df[tracker_df["Status"].isin(["WON", "LOST"])].copy()
+    completed = tracker_df[tracker_df["status"].isin(["WON", "LOST"])].copy()
     if len(completed) < 2:
         return None
         
-    completed['ResultNum'] = completed['Status'].apply(lambda x: 1 if x == 'WON' else -1)
+    completed['ResultNum'] = completed['status'].apply(lambda x: 1 if x == 'WON' else -1)
     completed['Cumulative'] = completed['ResultNum'].cumsum()
     
     plt.figure(figsize=(8, 4))
     plt.plot(range(len(completed)), completed['Cumulative'], marker='o', color='#2b8a3e', linewidth=2, markersize=5)
-    plt.title("Poisson Model Cumulative Performance Equity Curve", fontsize=12, fontweight='bold', color='#333333')
+    plt.title("Institutional SQLite Equity Curve", fontsize=12, fontweight='bold', color='#333333')
     plt.xlabel("Completed Matches", fontsize=10)
     plt.ylabel("Net Wins / Units", fontsize=10)
     plt.grid(True, linestyle='--', alpha=0.6)
@@ -298,22 +321,22 @@ def generate_performance_chart(tracker_df):
     return CHART_FILE
 
 def calculate_analytics_summaries(tracker_df):
-    completed = tracker_df[tracker_df["Status"].isin(["WON", "LOST"])]
+    completed = tracker_df[tracker_df["status"].isin(["WON", "LOST"])]
     if completed.empty:
         return "No completed matches evaluated yet.", "No completed matches evaluated yet."
     
     tier_summary = ""
     for tier in ["High", "Medium", "Low"]:
-        tier_df = completed[completed["Confidence"] == tier]
+        tier_df = completed[completed["confidence"] == tier]
         total = len(tier_df)
-        won = len(tier_df[tier_df["Status"] == "WON"])
+        won = len(tier_df[tier_df["status"] == "WON"])
         rate = (won / total * 100) if total > 0 else 0.0
         tier_summary += f"• <b>{tier} Confidence:</b> {won}/{total} ({rate:.1f}%)\n"
         
     league_summary = ""
-    for league, group in completed.groupby("League"):
+    for league, group in completed.groupby("league"):
         total = len(group)
-        won = len(group[group["Status"] == "WON"])
+        won = len(group[group["status"] == "WON"])
         rate = (won / total * 100) if total > 0 else 0.0
         league_summary += f"• <b>{league}:</b> {won}/{total} ({rate:.1f}%)\n"
         
@@ -334,16 +357,16 @@ def send_email(predictions, tracker_df):
         print("Email credentials missing.")
         return
 
-    completed = tracker_df[tracker_df["Status"].isin(["WON", "LOST"])]
+    completed = tracker_df[tracker_df["status"].isin(["WON", "LOST"])]
     total_completed = len(completed)
-    total_won = len(completed[completed["Status"] == "WON"])
+    total_won = len(completed[completed["status"] == "WON"])
     overall_accuracy = (total_won / total_completed * 100) if total_completed > 0 else 0.0
 
     tier_breakdown, league_breakdown = calculate_analytics_summaries(tracker_df)
     chart_path = generate_performance_chart(tracker_df)
 
-    html_content = "<h2>⚽ Poisson-Powered Institutional Football Report</h2>"
-    html_content += f"<p>Report generated on <b>{datetime.now().strftime('%Y-%m-%d')}</b> using Poisson probability simulations.</p>"
+    html_content = "<h2>⚽ Institutional SQLite Football Report</h2>"
+    html_content += f"<p>Report generated on <b>{datetime.now().strftime('%Y-%m-%d')}</b> with SQLite persistence, Poisson models, and advanced market filters.</p>"
     
     html_content += f"<div style='background: #e9ecef; padding: 10px; border-radius: 5px; margin-bottom: 15px;'>"
     html_content += f"<b>Overall Accuracy:</b> {total_won}/{total_completed} ({overall_accuracy:.1f}%)<br><br>"
@@ -357,34 +380,36 @@ def send_email(predictions, tracker_df):
 
     if not predictions:
         html_content += "<p><b>No upcoming matches found in the next 4 days across monitored leagues.</b></p>"
-        telegram_msg = "⚽ <b>Poisson Football Predictions</b>\nNo upcoming matches found in the 4-day window."
+        telegram_msg = "⚽ <b>SQLite Football Report</b>\nNo upcoming matches found in the 4-day window."
     else:
-        html_content += "<h3>📅 Full Upcoming Fixtures & Poisson Probabilities Table</h3>"
+        html_content += "<h3>📅 Upcoming Fixtures, Double Chance (Under 4.5) & Team Over 1.5 Markets</h3>"
         html_content += "<table border='1' cellspacing='0' cellpadding='5' style='border-collapse: collapse; width: 100%; font-family: sans-serif; font-size: 11px;'>"
-        html_content += "<tr style='background-color: #f8f9fa;'><th>Kickoff</th><th>League</th><th>Matchup</th><th>Poisson Probabilities</th><th>Pick</th><th>Stake</th><th>BTTS</th><th>O 2.5</th></tr>"
+        html_content += "<tr style='background-color: #f8f9fa;'><th>Kickoff</th><th>League</th><th>Matchup</th><th>Poisson Prob</th><th>DC (&lt;4.5 Goals)</th><th>Team &gt;1.5</th><th>Stake</th></tr>"
         
-        high_list, btts_list, over25_list = [], [], []
+        high_list, team_over15_list, dc_under45_list = [], [], []
 
         for p in predictions:
-            html_content += f"<tr><td>{p['kickoff']}</td><td>{p['league']}</td><td>{p['match']}</td><td>{p['poisson_odds']}</td><td><b>{p['prediction']}</b></td><td>{p['stake']}</td><td>{p['btts']}</td><td>{p['over_2_5']}</td></tr>"
+            html_content += f"<tr><td>{p['kickoff']}</td><td>{p['league']}</td><td>{p['match']}</td><td>{p['poisson_odds']}</td><td><b>{p['dc_under_45']}</b></td><td>{p['team_over_15']}</td><td>{p['stake']}</td></tr>"
             
-            item_desc = f"<b>{p['match']}</b> ({p['league']}) ➔ Odds: [{p['poisson_odds']}] | Pick: <b>{p['prediction']}</b>"
+            item_desc = f"<b>{p['match']}</b> ({p['league']}) ➔ DC & <4.5: <b>{p['dc_under_45']}</b> | Team >1.5: <b>{p['team_over_15']}</b>"
             if p['confidence'] == 'High': high_list.append(item_desc)
-            if p['btts'] == 'Yes': btts_list.append(f"<b>{p['match']}</b> ({p['kickoff']})")
-            if p['over_2_5'] == 'Yes': over25_list.append(f"<b>{p['match']}</b> ({p['kickoff']})")
+            if 'Both' in p['team_over_15'] or '(>1.5)' in p['team_over_15']: 
+                team_over15_list.append(f"<b>{p['match']}</b> ➔ {p['team_over_15']}")
+            if 'Under 4.5' in p['dc_under_45']:
+                dc_under45_list.append(f"<b>{p['match']}</b> ➔ {p['dc_under_45']}")
 
         html_content += "</table>"
 
-        html_content += "<h3 style='color: #2b8a3e;'>🔥 High Probability Poisson Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in high_list]) if high_list else "<li>None today.</li>") + "</ul>"
-        html_content += "<h3 style='color: #1971c2;'>⚡ Both Teams to Score (BTTS) Targets</h3><ul>" + ("".join([f"<li>{x}</li>" for x in btts_list]) if btts_list else "<li>None today.</li>") + "</ul>"
-        html_content += "<h3>⚽ Over 2.5 Goals Targets</h3><ul>" + ("".join([f"<li>{x}</li>" for x in over25_list]) if over25_list else "<li>None today.</li>") + "</ul>"
+        html_content += "<h3 style='color: #2b8a3e;'>🔥 High Confidence Poisson Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in high_list]) if high_list else "<li>None today.</li>") + "</ul>"
+        html_content += "<h3 style='color: #1971c2;'>⚡ Team Over 1.5 Targets</h3><ul>" + ("".join([f"<li>{x}</li>" for x in team_over15_list]) if team_over15_list else "<li>None today.</li>") + "</ul>"
+        html_content += "<h3>🛡️ Double Chance & Under 4.5 Goals Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in dc_under45_list]) if dc_under45_list else "<li>None today.</li>") + "</ul>"
 
-        telegram_msg = f"⚽ <b>Poisson Football Report</b>\n📊 <b>Accuracy:</b> {overall_accuracy:.1f}%\n"
+        telegram_msg = f"⚽ <b>SQLite Football Report</b>\n📊 <b>Accuracy:</b> {overall_accuracy:.1f}%\n"
         if high_list:
-            telegram_msg += f"\n🔥 <b>High Conf Poisson Picks:</b>\n" + "\n".join([f"• {item}" for item in high_list[:4]])
+            telegram_msg += f"\n🔥 <b>High Conf Picks:</b>\n" + "\n".join([f"• {item}" for item in high_list[:3]])
 
     msg = MIMEMultipart("related")
-    msg["Subject"] = f"Poisson Football Analytics & Equity Curve - {datetime.now().strftime('%Y-%m-%d')}"
+    msg["Subject"] = f"Institutional SQLite Football Analytics - {datetime.now().strftime('%Y-%m-%d')}"
     msg["From"] = EMAIL_SENDER
     msg["To"] = EMAIL_RECEIVER
     
@@ -403,16 +428,17 @@ def send_email(predictions, tracker_df):
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
             server.sendmail(EMAIL_SENDER, EMAIL_RECEIVER, msg.as_string())
-        print("Poisson analytics email sent successfully!")
+        print("Institutional SQLite email report sent successfully!")
     except Exception as e:
         print(f"Failed to send email: {e}")
 
     send_telegram_alert(telegram_msg)
 
 if __name__ == "__main__":
-    print("Running Poisson-powered quantitative football analytics pipeline...")
+    print("Initializing institutional SQLite database and running pipeline...")
+    init_db()
     matches = fetch_upcoming_matches()
     predictions = analyze_and_predict(matches)
-    tracker_df = update_tracker_and_evaluate(predictions)
+    tracker_df = update_sqlite_tracker_and_evaluate(predictions)
     send_email(predictions, tracker_df)
     print("Execution complete.")
