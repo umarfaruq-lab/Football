@@ -5,23 +5,24 @@ import sqlite3
 import logging
 import requests
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import pandas as pd
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.image import MIMEImage
 import matplotlib
-matplotlib.use('Agg')  # Non-interactive backend for server environments
+matplotlib.use('Agg')  # Non-interactive backend for headless environments
 import matplotlib.pyplot as plt
 
-# Configure Professional Enterprise Logging
+# Configure Enterprise Logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[logging.StreamHandler()]
 )
 
-# Environment Variables injected securely from GitHub Secrets
+# Environment Variables from GitHub Secrets
 API_KEY = os.getenv("FOOTBALL_API_KEY")
 EMAIL_SENDER = os.getenv("EMAIL_SENDER")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
@@ -32,7 +33,10 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 BASE_URL = "https://api.football-data.org/v4"
 HEADERS = {"X-Auth-Token": API_KEY} if API_KEY else {}
 
-# All 12 Free-Tier Competitions on football-data.org
+# Time Zone Configuration
+LOCAL_TZ = ZoneInfo("Africa/Freetown")
+
+# Monitored Leagues on Football-Data.org
 LEAGUES = {
     "PL": "Premier League (England)",
     "ELC": "Championship (England)",
@@ -51,8 +55,12 @@ LEAGUES = {
 DB_FILE = "tracker.db"
 CHART_FILE = "performance_chart.png"
 
+def get_freetown_time():
+    """Returns current datetime explicitly localized to Africa/Freetown."""
+    return datetime.now(LOCAL_TZ)
+
 def init_db():
-    """Initializes the institutional SQLite database for robust historical tracking."""
+    """Initializes SQLite database with relational persistence."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute('''
@@ -72,7 +80,7 @@ def init_db():
     logging.info("SQLite database initialized successfully.")
 
 def robust_api_get(url, retries=3, backoff_factor=2):
-    """Robust API request wrapper with exponential backoff for rate limits and connection drops."""
+    """API wrapper with exponential backoff for rate limits and drops."""
     for attempt in range(retries):
         try:
             response = requests.get(url, headers=HEADERS, timeout=10)
@@ -92,10 +100,17 @@ def robust_api_get(url, retries=3, backoff_factor=2):
     return None
 
 def fetch_upcoming_matches():
-    """Fetches upcoming matches across all 12 free leagues for the next 4 days."""
-    today = datetime.now().strftime("%Y-%m-%d")
-    future_date = (datetime.now() + timedelta(days=4)).strftime("%Y-%m-%d")
-    url = f"{BASE_URL}/matches?dateFrom={today}&dateTo={future_date}"
+    """
+    SMART WINDOW FETCH:
+    Fetches matches from YESTERDAY to 3 DAYS AHEAD in Africa/Freetown time.
+    Prevents missed reports or empty updates caused by GitHub Actions queue delays.
+    """
+    now_freetown = get_freetown_time()
+    start_date = (now_freetown - timedelta(days=1)).strftime("%Y-%m-%d")
+    end_date = (now_freetown + timedelta(days=3)).strftime("%Y-%m-%d")
+    
+    url = f"{BASE_URL}/matches?dateFrom={start_date}&dateTo={end_date}"
+    logging.info(f"Fetching matches within Smart Window: {start_date} to {end_date} (Africa/Freetown)")
     
     response = robust_api_get(url)
     if not response or response.status_code != 200:
@@ -103,7 +118,7 @@ def fetch_upcoming_matches():
         
     matches = response.json().get("matches", [])
     filtered_matches = [m for m in matches if m.get("competition", {}).get("code") in LEAGUES]
-    logging.info(f"Found {len(filtered_matches)} upcoming matches across monitored leagues.")
+    logging.info(f"Found {len(filtered_matches)} matches across monitored leagues.")
     return filtered_matches
 
 def fetch_league_standings(competition_code):
@@ -118,7 +133,7 @@ def fetch_league_standings(competition_code):
     return {}
 
 def calculate_poisson_probabilities(exp_home, exp_away, max_goals=6):
-    """Calculates exact match outcome percentages using Poisson distribution."""
+    """Calculates match outcome probabilities using Poisson distribution."""
     home_win_prob = 0.0
     draw_prob = 0.0
     away_win_prob = 0.0
@@ -139,7 +154,7 @@ def calculate_poisson_probabilities(exp_home, exp_away, max_goals=6):
     return round(home_win_prob * 100, 1), round(draw_prob * 100, 1), round(away_win_prob * 100, 1)
 
 def calculate_kelly_stake(confidence, bankroll=100.0):
-    """Calculates suggested bankroll stake using fractional Kelly principles."""
+    """Sizes recommended stakes via fractional Kelly principles."""
     if confidence == "High":
         return round(bankroll * 0.02, 2)
     elif confidence == "Medium":
@@ -151,21 +166,22 @@ def analyze_and_predict(matches):
     predictions = []
     
     for match in matches:
-        match_id = match["id"]
         comp_code = match["competition"]["code"]
         home_team = match["homeTeam"]["name"]
         away_team = match["awayTeam"]["name"]
         home_id = match["homeTeam"]["id"]
         away_id = match["awayTeam"]["id"]
         
+        # Convert UTC kickoff time to Africa/Freetown local time
         utc_date_str = match.get("utcDate", "")
         try:
-            dt_obj = datetime.strptime(utc_date_str, "%Y-%m-%dT%H:%M:%SZ")
-            kickoff_display = dt_obj.strftime("%b %d, %H:%M UTC")
-            match_date_only = dt_obj.strftime("%Y-%m-%d")
-        except:
+            utc_dt = datetime.strptime(utc_date_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=ZoneInfo("UTC"))
+            local_dt = utc_dt.astimezone(LOCAL_TZ)
+            kickoff_display = local_dt.strftime("%b %d, %H:%M Freetown")
+            match_date_only = local_dt.strftime("%Y-%m-%d")
+        except Exception:
             kickoff_display = "TBD"
-            match_date_only = datetime.now().strftime("%Y-%m-%d")
+            match_date_only = get_freetown_time().strftime("%Y-%m-%d")
 
         standings = fetch_league_standings(comp_code)
         home_stats = standings.get(home_id, {})
@@ -184,14 +200,10 @@ def analyze_and_predict(matches):
         exp_away_goals = round((away_gf + home_ga) / 2, 2)
         total_exp_goals = round(exp_home_goals + exp_away_goals, 2)
         
-        # Poisson Probabilities
+        # Poisson Outcome Probabilities
         p_home, p_draw, p_away = calculate_poisson_probabilities(exp_home_goals, exp_away_goals)
         
-        # Markets & Custom Filters
-        btts = "Yes" if (exp_home_goals >= 0.85 and exp_away_goals >= 0.85) else "No"
-        over_2_5 = "Yes" if total_exp_goals >= 2.5 else "Under 2.5"
-        
-        # Market 1: Team Over 1.5 Goals
+        # Market Filter 1: Team Over 1.5 Goals
         if exp_home_goals >= 1.5 and exp_away_goals >= 1.5:
             team_over_15 = "Both Teams (>1.5)"
         elif exp_home_goals >= 1.5:
@@ -201,7 +213,7 @@ def analyze_and_predict(matches):
         else:
             team_over_15 = "No Team (xG < 1.5)"
 
-        # Confidence & Market 2: Double Chance Under 4.5 Goals Filter
+        # Tiers & Market Filter 2: Double Chance Under 4.5 Goals
         if p_home >= 55.0:
             predicted_winner, confidence, base_dc = home_team, "High", f"{home_team} or Draw (1X)"
         elif p_away >= 50.0:
@@ -230,8 +242,6 @@ def analyze_and_predict(matches):
             "stake": f"${recommended_stake}",
             "dc_under_45": double_chance_under_45,
             "team_over_15": team_over_15,
-            "btts": btts,
-            "over_2_5": over_2_5,
             "poisson_odds": f"H:{p_home}% | D:{p_draw}% | A:{p_away}%",
             "exp_goals": f"{exp_home_goals} - {exp_away_goals} (Tot: {total_exp_goals})"
         })
@@ -239,7 +249,7 @@ def analyze_and_predict(matches):
     return predictions
 
 def update_sqlite_tracker_and_evaluate(new_predictions):
-    """Evaluates pending outcomes and stores new predictions in SQLite database."""
+    """Evaluates pending outcomes and appends new predictions to tracker.db."""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     
@@ -248,7 +258,7 @@ def update_sqlite_tracker_and_evaluate(new_predictions):
     
     if pending_rows:
         oldest_date = min([row[1] for row in pending_rows])
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = get_freetown_time().strftime("%Y-%m-%d")
         url = f"{BASE_URL}/matches?dateFrom={oldest_date}&dateTo={today_str}"
         response = robust_api_get(url)
         
@@ -289,7 +299,7 @@ def update_sqlite_tracker_and_evaluate(new_predictions):
     return df
 
 def generate_performance_chart(tracker_df):
-    """Generates equity curve chart if enough completed matches exist."""
+    """Plots equity curve if at least 2 evaluated matches exist."""
     completed = tracker_df[tracker_df["status"].isin(["WON", "LOST"])].copy()
     if len(completed) < 2:
         return None
@@ -299,9 +309,9 @@ def generate_performance_chart(tracker_df):
     
     plt.figure(figsize=(8, 4))
     plt.plot(range(len(completed)), completed['Cumulative'], marker='o', color='#2b8a3e', linewidth=2, markersize=5)
-    plt.title("Institutional SQLite Equity Curve", fontsize=12, fontweight='bold', color='#333333')
+    plt.title("SQLite Equity Curve (Africa/Freetown Pipeline)", fontsize=12, fontweight='bold', color='#333333')
     plt.xlabel("Completed Matches", fontsize=10)
-    plt.ylabel("Net Wins / Units", fontsize=10)
+    plt.ylabel("Net Units", fontsize=10)
     plt.grid(True, linestyle='--', alpha=0.6)
     plt.tight_layout()
     
@@ -339,11 +349,11 @@ def send_telegram_alert(message):
     try:
         requests.post(url, json=payload, timeout=5)
     except Exception as e:
-        logging.error(f"Telegram error: {e}")
+        logging.error(f"Telegram alert error: {e}")
 
 def send_email(predictions, tracker_df):
     if not EMAIL_SENDER or not EMAIL_PASSWORD or not EMAIL_RECEIVER:
-        logging.error("Email credentials missing.")
+        logging.error("Email environment variables missing.")
         return
 
     completed = tracker_df[tracker_df["status"].isin(["WON", "LOST"])]
@@ -353,12 +363,13 @@ def send_email(predictions, tracker_df):
 
     tier_breakdown, league_breakdown = calculate_analytics_summaries(tracker_df)
     chart_path = generate_performance_chart(tracker_df)
+    freetown_now_str = get_freetown_time().strftime('%Y-%m-%d %H:%M')
 
-    html_content = "<h2>⚽ Institutional Enterprise Football Report</h2>"
-    html_content += f"<p>Report generated on <b>{datetime.now().strftime('%Y-%m-%d')}</b> with SQLite persistence and advanced markets.</p>"
+    html_content = "<h2>⚽ Enterprise Football Analytics (Freetown Edition)</h2>"
+    html_content += f"<p>Report generated at <b>{freetown_now_str} (Africa/Freetown)</b> with Smart Fetch Window buffering.</p>"
     
-    html_content += f"<div style='background: #e9ecef; padding: 10px; border-radius: 5px; margin-bottom: 15px;'>"
-    html_content += f"<b>Overall Accuracy:</b> {total_won}/{total_completed} ({overall_accuracy:.1f}%)<br><br>"
+    html_content += "<div style='background: #e9ecef; padding: 10px; border-radius: 5px; margin-bottom: 15px;'>"
+    html_content += f"<b>Overall Model Accuracy:</b> {total_won}/{total_completed} ({overall_accuracy:.1f}%)<br><br>"
     html_content += f"<b>Performance by Tier:</b><br>{tier_breakdown.replace(chr(10), '<br>')}<br>"
     html_content += f"<b>Performance by League:</b><br>{league_breakdown.replace(chr(10), '<br>')}"
     html_content += "</div>"
@@ -368,10 +379,10 @@ def send_email(predictions, tracker_df):
         html_content += "<p><img src='cid:performancechart' style='max-width: 100%; height: auto; border-radius: 5px;'></p>"
 
     if not predictions:
-        html_content += "<p><b>No upcoming matches found in the next 4 days across monitored leagues.</b></p>"
-        telegram_msg = "⚽ <b>Enterprise Football Report</b>\nNo upcoming matches found in the 4-day window."
+        html_content += "<p><b>No upcoming matches found in the current window across monitored leagues.</b></p>"
+        telegram_msg = f"⚽ <b>Freetown Football Report ({freetown_now_str})</b>\nNo upcoming matches found in the current window."
     else:
-        html_content += "<h3>📅 Upcoming Fixtures, Double Chance (Under 4.5) & Team Over 1.5 Markets</h3>"
+        html_content += "<h3>📅 Upcoming Fixtures, Double Chance (&lt;4.5) &amp; Team &gt;1.5 Markets</h3>"
         html_content += "<table border='1' cellspacing='0' cellpadding='5' style='border-collapse: collapse; width: 100%; font-family: sans-serif; font-size: 11px;'>"
         html_content += "<tr style='background-color: #f8f9fa;'><th>Kickoff</th><th>League</th><th>Matchup</th><th>Poisson Prob</th><th>DC (&lt;4.5 Goals)</th><th>Team &gt;1.5</th><th>Stake</th></tr>"
         
@@ -380,7 +391,7 @@ def send_email(predictions, tracker_df):
         for p in predictions:
             html_content += f"<tr><td>{p['kickoff']}</td><td>{p['league']}</td><td>{p['match']}</td><td>{p['poisson_odds']}</td><td><b>{p['dc_under_45']}</b></td><td>{p['team_over_15']}</td><td>{p['stake']}</td></tr>"
             
-            item_desc = f"<b>{p['match']}</b> ({p['league']}) ➔ DC & <4.5: <b>{p['dc_under_45']}</b> | Team >1.5: <b>{p['team_over_15']}</b>"
+            item_desc = f"<b>{p['match']}</b> ({p['league']}) ➔ DC: <b>{p['dc_under_45']}</b> | Team >1.5: <b>{p['team_over_15']}</b>"
             if p['confidence'] == 'High': high_list.append(item_desc)
             if 'Both' in p['team_over_15'] or '(>1.5)' in p['team_over_15']: 
                 team_over15_list.append(f"<b>{p['match']}</b> ➔ {p['team_over_15']}")
@@ -391,14 +402,14 @@ def send_email(predictions, tracker_df):
 
         html_content += "<h3 style='color: #2b8a3e;'>🔥 High Confidence Poisson Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in high_list]) if high_list else "<li>None today.</li>") + "</ul>"
         html_content += "<h3 style='color: #1971c2;'>⚡ Team Over 1.5 Targets</h3><ul>" + ("".join([f"<li>{x}</li>" for x in team_over15_list]) if team_over15_list else "<li>None today.</li>") + "</ul>"
-        html_content += "<h3>🛡️ Double Chance & Under 4.5 Goals Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in dc_under45_list]) if dc_under45_list else "<li>None today.</li>") + "</ul>"
+        html_content += "<h3>🛡️ Double Chance &amp; Under 4.5 Goals Shortlist</h3><ul>" + ("".join([f"<li>{x}</li>" for x in dc_under45_list]) if dc_under45_list else "<li>None today.</li>") + "</ul>"
 
-        telegram_msg = f"⚽ <b>Enterprise Football Report</b>\n📊 <b>Accuracy:</b> {overall_accuracy:.1f}%\n"
+        telegram_msg = f"⚽ <b>Freetown Football Report</b>\n📊 <b>Accuracy:</b> {overall_accuracy:.1f}%\n"
         if high_list:
             telegram_msg += f"\n🔥 <b>High Conf Picks:</b>\n" + "\n".join([f"• {item}" for item in high_list[:3]])
 
     msg = MIMEMultipart("related")
-    msg["Subject"] = f"Institutional Enterprise Football Analytics - {datetime.now().strftime('%Y-%m-%d')}"
+    msg["Subject"] = f"Freetown Football Analytics - {get_freetown_time().strftime('%Y-%m-%d')}"
     msg["From"] = EMAIL_SENDER
     msg["To"] = EMAIL_RECEIVER
     
@@ -417,14 +428,14 @@ def send_email(predictions, tracker_df):
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
             server.sendmail(EMAIL_SENDER, EMAIL_RECEIVER, msg.as_string())
-        logging.info("Institutional email report sent successfully!")
+        logging.info("Email report dispatched successfully!")
     except Exception as e:
-        logging.error(f"Failed to send email: {e}")
+        logging.error(f"Failed to dispatch email: {e}")
 
     send_telegram_alert(telegram_msg)
 
 if __name__ == "__main__":
-    logging.info("Starting institutional quantitative football analytics pipeline...")
+    logging.info("Starting Freetown-localized quantitative pipeline...")
     init_db()
     matches = fetch_upcoming_matches()
     predictions = analyze_and_predict(matches)
