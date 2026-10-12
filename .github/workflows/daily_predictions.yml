@@ -1,11 +1,10 @@
 name: Enterprise Football Pipeline
 
 on:
-  repository_dispatch:
-    types: [run-daily-pipeline] # External trigger webhook
-  workflow_dispatch:            # Allows manual triggers in GitHub UI
   schedule:
-    - cron: '23 7 * * *'        # Backup internal schedule
+    # 06:30 UTC = 06:30 AM Africa/Freetown time (Off-peak minute avoids queue drops)
+    - cron: '30 6 * * *'
+  workflow_dispatch: # Manual trigger fallback
 
 jobs:
   run-analytics:
@@ -41,6 +40,7 @@ jobs:
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "actions@github.com"
           
+          # Safe git additions
           if [ -f tracker.db ]; then git add tracker.db; fi
           if [ -f performance_chart.png ]; then git add performance_chart.png; fi
           
